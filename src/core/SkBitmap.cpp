@@ -983,6 +983,12 @@ bool SkBitmap::extractSubset(SkBitmap* result, const SkIRect& subset) const {
     }
     SkDEBUGCODE(dst.validate();)
 
+    //preserve the opaque information, so we can draw faster
+    if(this->isOpaque())
+    {
+        dst.setIsOpaque(true);
+    }
+
     // we know we're good, so commit to result
     result->swap(dst);
     return true;
