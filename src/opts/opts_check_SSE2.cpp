@@ -99,6 +99,20 @@ void SkBitmapProcState::platformProcs() {
         }
     }
 
+    if (hasSSE2()) {
+        if (fSampleProc32 == S32_opaque_D32_nofilter_DX) {
+            fSampleProc32 = S32_opaque_D32_nofilter_DX_SSE2;
+        } else if (fSampleProc32 == S32_opaque_D32_filter_DXDY) {
+            fSampleProc32 = S32_opaque_D32_filter_DXDY_SSE2_asm;
+        } else if (fSampleProc32 == S32_alpha_D32_filter_DXDY) {
+            fSampleProc32 = S32_alpha_D32_filter_DXDY_SSE2_asm;
+        }
+        if (fSampleProc16 == S32_D16_filter_DX) {
+            fSampleProc16 = S32_D16_filter_DX_SSE2;
+        }
+    }
+
+
     if (cachedHasSSSE3() || cachedHasSSE2()) {
         if (fMatrixProc == ClampX_ClampY_filter_scale) {
             fMatrixProc = ClampX_ClampY_filter_scale_SSE2;
