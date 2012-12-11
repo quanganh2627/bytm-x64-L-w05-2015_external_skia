@@ -669,9 +669,13 @@ void ClampX_ClampY_nofilter_scale_SSE2(const SkBitmapProcState& s,
 
 /*  SSE version of ClampX_ClampY_filter_affine()
  *  portable version is in core/SkBitmapProcState_matrix.h
+ *  the address of xy should be 16bytes aligned, otherwise it will
+ *  core dump because of _mm_store_si128()
  */
 void ClampX_ClampY_filter_affine_SSE2(const SkBitmapProcState& s,
                                       uint32_t xy[], int count, int x, int y) {
+
+    SkASSERT(((size_t)xy & 0x0F) == 0);
     SkPoint srcPt;
     s.fInvProc(*s.fInvMatrix,
                SkIntToScalar(x) + SK_ScalarHalf,
@@ -1043,7 +1047,7 @@ void S32_opaque_D32_filter_DXDY_SSE2_asm(const SkBitmapProcState& s,
    unsigned y0, y1, x0, x1, subX, subY;
    const SkPMColor *row0, *row1;
    if (count >= 4) {
-      while (((size_t)colors & 0x0F) != 0)
+      while (((size_t)xy & 0x0F) != 0)
        {
            data = *xy++;
            y0 = data >> 14;
@@ -1182,7 +1186,7 @@ void S32_opaque_D32_filter_DXDY_SSE2_asm(const SkBitmapProcState& s,
            //[Da11, Ca11, Ba11, Aa11]
            "shufps $0x88,%%xmm1,%%xmm7\n"   //a11.3210
 
-           "movaps (%%edx),%%xmm1\n"        //vy_d
+           "movdqa  (%%edx),%%xmm1\n"        //vy_d
 
            "movaps %%xmm1,%%xmm2\n"         //vy_d
            "shufps $0xdd,0x10(%%edx),%%xmm1\n"    //vx
@@ -1264,7 +1268,7 @@ void S32_opaque_D32_filter_DXDY_SSE2_asm(const SkBitmapProcState& s,
            "pand   vmask2,%%xmm5\n"         //ax.h & vmask2
            "addl   $0x10,%[colors]\n"       //colors+=4
            "por    %%xmm5,%%xmm4\n"         //ax.l|ax.h
-           "movdqa %%xmm4,(%%ecx)\n"        //store colors
+           "movdqu %%xmm4,(%%ecx)\n"        //store colors
            "cmp    $0x4,%%edi\n"
            "mov    %%edi,%[count]\n"
            "jge    1b\n"
@@ -1567,7 +1571,7 @@ void S32_alpha_D32_filter_DXDY_SSE2_asm(const SkBitmapProcState& s,
    unsigned rb = s.fBitmap->rowBytes();
    unsigned alphaScale = s.fAlphaScale;
    if (count >= 4) {
-      while (((size_t)colors & 0x0F) != 0)
+      while (((size_t)xy & 0x0F) != 0)
        {
            data = *xy++;
            y0 = data >> 14;
@@ -1718,7 +1722,7 @@ void S32_alpha_D32_filter_DXDY_SSE2_asm(const SkBitmapProcState& s,
 
        "shufps $0x88,%%xmm1,%%xmm7\n"        //a11.3210
 
-       "movaps (%%edx),%%xmm1\n"        //vy_d
+       "movdqa (%%edx),%%xmm1\n"        //vy_d
        //"movhpd %[tmp7],%%xmm3\n"        //a01._3_2
 
        "movaps %%xmm1,%%xmm2\n"        //vy_d
@@ -1808,7 +1812,7 @@ void S32_alpha_D32_filter_DXDY_SSE2_asm(const SkBitmapProcState& s,
        "pand   vmask2,%%xmm5\n"        //ax.h & vmask2
        "addl   $0x10,%[colors]\n"        //colors+=4
        "por    %%xmm5,%%xmm4\n"        //ax.l|ax.h
-       "movdqa %%xmm4,(%%ecx)\n"        //store colors
+       "movdqu %%xmm4,(%%ecx)\n"        //store colors
        "cmp    $0x4,%%edi\n"
        "mov    %%edi,%[count]\n"
        "jge    1b\n"
