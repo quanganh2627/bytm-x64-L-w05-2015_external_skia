@@ -192,6 +192,7 @@ void SCALE_FILTER_NAME(const SkBitmapProcState& s,
 #endif
     {
 #ifdef  USE_SSE2
+#ifdef ClampX_ClampY_filter_scale_SSE2_with_shader
     if(count >=4) {
         float maxX_float = (float)maxX;
         __m128i _m_fx, _m_dx, _m_one, _m_i, _m_F, _m_temp1, _m_temp2, _m_temp3;
@@ -229,6 +230,7 @@ void SCALE_FILTER_NAME(const SkBitmapProcState& s,
     }
     if(count == 0)
         return;
+#endif
 #endif
         do {
             *xy++ = PACK_FILTER_X_NAME(fx, maxX, one PREAMBLE_ARG_X);

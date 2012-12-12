@@ -43,6 +43,10 @@ void decal_filter_scale(uint32_t dst[], SkFixed fx, SkFixed dx, int count);
 #define CHECK_FOR_DECAL
 #if	defined(__ARM_HAVE_NEON)
     #include "SkBitmapProcState_matrix_clamp.h"
+#elif defined USE_SSE2
+    #define ClampX_ClampY_filter_scale_SSE2_with_shader
+    #include "SkBitmapProcState_matrix.h"
+    #undef  ClampX_ClampY_filter_scale_SSE2_with_shader
 #else
     #include "SkBitmapProcState_matrix.h"
 #endif
