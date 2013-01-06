@@ -11,7 +11,11 @@
 #include "SkBlitRow_opts_SSE2.h"
 #include "SkUtils_opts_SSE2.h"
 #include "SkUtils.h"
-
+#include "SkShader.h"
+extern void Repeate_S32_Opaque_D32_filter_DX_shaderproc_opt(
+                                       const SkBitmapProcState& s,
+                                       int x, int y, uint32_t* colors,
+                                       int count);
 /* This file must *not* be compiled with -msse or -msse2, otherwise
    gcc may generate sse2 even for scalar ops (and thus give an invalid
    instruction on Pentium3 on the code below).  Only files named *_SSE2.cpp
@@ -88,6 +92,15 @@ void SkBitmapProcState::platformProcs() {
     if (cachedHasSSSE3()) {
         if (fSampleProc32 == S32_opaque_D32_filter_DX) {
             fSampleProc32 = S32_opaque_D32_filter_DX_SSSE3;
+
+            bool repeatXY = SkShader::kRepeat_TileMode == fTileModeX &&
+                            SkShader::kRepeat_TileMode == fTileModeY;
+            const unsigned max = fBitmap->width() ;
+            // SSSE3 opted only if more than 4 pixels
+            if (fInvSx > 0 && repeatXY && max > 4)
+            {
+                fShaderProc32 = Repeate_S32_Opaque_D32_filter_DX_shaderproc_opt;
+            }
         } else if (fSampleProc32 == S32_alpha_D32_filter_DX) {
             fSampleProc32 = S32_alpha_D32_filter_DX_SSSE3;
         }
