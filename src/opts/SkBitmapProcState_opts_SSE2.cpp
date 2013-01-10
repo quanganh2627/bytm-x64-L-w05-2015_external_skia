@@ -1078,6 +1078,17 @@ void S32_opaque_D32_filter_DXDY_SSE2_asm(const SkBitmapProcState& s,
 	{
        __attribute__((aligned(16)))
        __m128i tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7, tmp8, tmp9, tmpa;
+       tmp1 = _mm_setzero_si128();
+       tmp2 = _mm_setzero_si128();
+       tmp3 = _mm_setzero_si128();
+       tmp4 = _mm_setzero_si128();
+       tmp5 = _mm_setzero_si128();
+       tmp6 = _mm_setzero_si128();
+       tmp7 = _mm_setzero_si128();
+       tmp8 = _mm_setzero_si128();
+       tmp9 = _mm_setzero_si128();
+       tmpa = _mm_setzero_si128();
+
        // load 4 pixes in each run [D, C, B, A]
        __asm__(
         "1:\n"
@@ -1604,6 +1615,18 @@ void S32_alpha_D32_filter_DXDY_SSE2_asm(const SkBitmapProcState& s,
    {
        __attribute__((aligned(16)))
    __m128i tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7, tmp8, tmp9, tmpa, tmpb;
+   tmp1 = _mm_setzero_si128();
+   tmp2 = _mm_setzero_si128();
+   tmp3 = _mm_setzero_si128();
+   tmp4 = _mm_setzero_si128();
+   tmp5 = _mm_setzero_si128();
+   tmp6 = _mm_setzero_si128();
+   tmp7 = _mm_setzero_si128();
+   tmp8 = _mm_setzero_si128();
+   tmp9 = _mm_setzero_si128();
+   tmpa = _mm_setzero_si128();
+   tmpb = _mm_setzero_si128();
+
    //unsigned int tmpeax;
    __asm__(
    //     "mov   %%eax, %[tmpeax]\n"
