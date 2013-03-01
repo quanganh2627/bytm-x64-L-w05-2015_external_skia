@@ -628,7 +628,7 @@ void Repeate_S32_Opaque_D32_filter_DX_shaderproc_opt(const SkBitmapProcState& s,
                                             int count) {
 
     SkASSERT((s.fBitmap->width()) > 1);
-    SkASSERT((s.fInvSx) > 0);
+    SkASSERT(((s.fInvSx) > 0) && (s.fInvSx & 0xFFFF));
     const unsigned maxX = s.fBitmap->width() - 1;
     const SkFixed oneX = s.fFilterOneX;
     const SkFixed dx = s.fInvSx;

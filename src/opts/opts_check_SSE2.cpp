@@ -96,8 +96,8 @@ void SkBitmapProcState::platformProcs() {
             bool repeatXY = SkShader::kRepeat_TileMode == fTileModeX &&
                             SkShader::kRepeat_TileMode == fTileModeY;
             const unsigned max = fBitmap->width() ;
-            // SSSE3 opted only if more than 4 pixels
-            if (fInvSx > 0 && repeatXY && max > 4)
+            // SSSE3 opted only if more than 4 pixels, dx=non-zero
+            if ((fInvSx > 0) && repeatXY && (max > 4) && ((fInvSx & 0xFFFF) != 0))
             {
                 fShaderProc32 = Repeate_S32_Opaque_D32_filter_DX_shaderproc_opt;
             }
