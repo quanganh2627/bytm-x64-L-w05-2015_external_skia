@@ -326,7 +326,7 @@ SkPixelRef* SkBitmap::setPixelRef(SkPixelRef* pr, size_t offset) {
 }
 
 void SkBitmap::lockPixels() const {
-    if (NULL != fPixelRef && 0 == sk_atomic_inc(&fPixelLockCount)) {
+    if (NULL != fPixelRef && 1 == ++fPixelLockCount) {
         fPixelRef->lockPixels();
         this->updatePixelsFromRef();
     }
@@ -336,7 +336,7 @@ void SkBitmap::lockPixels() const {
 void SkBitmap::unlockPixels() const {
     SkASSERT(NULL == fPixelRef || fPixelLockCount > 0);
 
-    if (NULL != fPixelRef && 1 == sk_atomic_dec(&fPixelLockCount)) {
+    if (NULL != fPixelRef && 0 == --fPixelLockCount) {
         fPixelRef->unlockPixels();
         this->updatePixelsFromRef();
     }
@@ -831,12 +831,6 @@ bool SkBitmap::extractSubset(SkBitmap* result, const SkIRect& subset) const {
         dst.setPixels((char*)fPixels + offset, this->getColorTable());
     }
     SkDEBUGCODE(dst.validate();)
-
-    //preserve the opaque information, so we can draw faster
-    if(this->isOpaque())
-    {
-        dst.setIsOpaque(true);
-    }
 
     // we know we're good, so commit to result
     result->swap(dst);

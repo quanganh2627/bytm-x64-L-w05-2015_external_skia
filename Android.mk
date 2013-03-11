@@ -269,22 +269,10 @@ LOCAL_SRC_FILES += \
 	src/opts/SkBitmapProcState_opts_arm.cpp \
 	src/opts/SkBlitRow_opts_arm.cpp
 else
-ifeq ($(TARGET_ARCH_VARIANT),x86-atom)
-
-LOCAL_SRC_FILES += \
-    src/opts/SkBlitRow_opts_SSE2.cpp \
-    src/opts/SkBitmapProcState_opts_SSE2.cpp \
-    src/opts/SkBitmapProcState_opts_SSSE3.cpp \
-    src/opts/SkBitmapProcState_opts_SSE2_asm.S \
-    src/opts/opts_check_SSE2.cpp \
-    src/opts/SkUtils_opts_SSE2.cpp
-
-else
 LOCAL_SRC_FILES += \
 	src/opts/SkBlitRow_opts_none.cpp \
 	src/opts/SkBitmapProcState_opts_none.cpp \
 	src/opts/SkUtils_opts_none.cpp
-endif
 endif
 
 # these are for emoji support, needed by webkit
@@ -344,10 +332,6 @@ LOCAL_ARM_MODE := arm
 
 ifneq ($(ARCH_ARM_HAVE_VFP),true)
        LOCAL_CFLAGS += -DSK_SOFTWARE_FLOAT
-endif
-
-ifeq ($(TARGET_USE_GR_STATIC_RECT_VB),true)
-	LOCAL_CFLAGS += -DGR_STATIC_RECT_VB
 endif
 
 ifeq ($(ARCH_ARM_HAVE_NEON),true)
