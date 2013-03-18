@@ -406,6 +406,7 @@ SkDevice* SkCanvas::init(SkDevice* device) {
     fLastDeviceToGainFocus = NULL;
     fDeviceCMDirty = false;
     fLayerCount = 0;
+    fQuickRejectEnableCountdown = 0;
 
     fMCRec = (MCRec*)fMCStack.push_back();
     new (fMCRec) MCRec(NULL, 0);
@@ -1371,6 +1372,10 @@ void SkCanvas::drawPoints(PointMode mode, size_t count, const SkPoint pts[],
 }
 
 void SkCanvas::drawRect(const SkRect& r, const SkPaint& paint) {
+    if (fQuickRejectEnableCountdown == 0)
+    {
+        // The quick reject itself can be quite costly, so if it fails we turn it off and try
+        // again after drawing QUICK_REJECT_SAMPLE_INTERVAL rectangles
     if (paint.canComputeFastBounds()) {
         SkRect storage;
         if (this->quickReject(paint.computeFastBounds(r, &storage),
@@ -1378,6 +1383,10 @@ void SkCanvas::drawRect(const SkRect& r, const SkPaint& paint) {
             return;
         }
     }
+        fQuickRejectEnableCountdown = QUICK_REJECT_SAMPLE_INTERVAL;
+    }
+    else
+        fQuickRejectEnableCountdown -= 1;
 
     LOOPER_BEGIN(paint, SkDrawFilter::kRect_Type)
 
