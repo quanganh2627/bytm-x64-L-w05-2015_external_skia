@@ -205,6 +205,47 @@ void SCALE_FILTER_NAME(const SkBitmapProcState& s,
     } else
 #endif
     {
+#if SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSE2
+#ifdef ClampX_ClampY_filter_scale_SSE2_with_shader
+    if (count >= 4) {
+        float maxX_float = (float)maxX;
+        __m128i _m_fx, _m_dx, _m_one, _m_i, _m_F, _m_temp1, _m_temp2, _m_temp3;
+        __m128 _m_tmp1, _m_tmp2, _m_maxX;
+        _m_maxX = _mm_set_ps(maxX_float, maxX_float, maxX_float, maxX_float);
+        _m_dx  = _mm_set1_epi32(dx * 4);
+        _m_F = _mm_set1_epi32(0xF);
+        _m_one = _mm_set1_epi32(one);
+        _m_fx  = _mm_set_epi32(fx + dx * 3, fx + dx *2, fx + dx, fx);
+        __m128 zero = _mm_setzero_ps();
+        fx += ((count >>2) <<2) * dx;
+        do {
+            _m_temp1 = _mm_srai_epi32(_m_fx, 16);
+            _m_tmp1 = _mm_cvtepi32_ps(_m_temp1);
+            _m_tmp2 = _mm_max_ps(_m_tmp1, zero);
+            _m_tmp1 = _mm_min_ps(_m_tmp2, _m_maxX);
+            _m_i = _mm_cvtps_epi32(_m_tmp1);
+            _m_temp1 = _mm_slli_epi32(_m_i, 4);
+            _m_temp2 = _mm_srai_epi32(_m_fx, 12);
+            _m_i = _mm_and_si128(_m_temp2, _m_F);
+            _m_temp2 = _mm_or_si128(_m_temp1, _m_i);
+            _m_temp1 = _mm_slli_epi32(_m_temp2, 14);
+            _m_temp2 = _mm_add_epi32(_m_fx, _m_one);
+            _m_temp3 = _mm_srai_epi32(_m_temp2, 16);
+            _m_tmp2 = _mm_cvtepi32_ps(_m_temp3);
+            _m_tmp1 = _mm_max_ps(_m_tmp2, zero);
+            _m_tmp2 = _mm_min_ps(_m_tmp1, _m_maxX);
+            _m_i = _mm_cvtps_epi32(_m_tmp2);
+            _m_temp2 = _mm_or_si128(_m_temp1, _m_i);
+            _mm_storeu_si128((__m128i *)xy, _m_temp2);
+            _m_fx    = _mm_add_epi32(_m_fx, _m_dx);
+            xy = xy + 4;
+            count = count - 4;
+        } while (count >= 4);
+    }
+    if (count == 0)
+        return;
+#endif
+#endif
         do {
             SkFixed fixedFx = SkFractionalIntToFixed(fx);
             *xy++ = PACK_FILTER_X_NAME(fixedFx, maxX, one PREAMBLE_ARG_X);
