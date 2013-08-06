@@ -218,6 +218,10 @@ void S32_opaque_D32_filter_DXDY(const SkBitmapProcState& s,
                                 const uint32_t xy[], int count, SkPMColor colors[]);
 void S32_alpha_D32_filter_DXDY(const SkBitmapProcState& s,
                                const uint32_t xy[], int count, SkPMColor colors[]);
+void S32_D16_filter_DX(const SkBitmapProcState& s, const uint32_t xy[],
+                              int count, uint16_t colors[]);
+void S32_opaque_D32_nofilter_DX(const SkBitmapProcState& s, const uint32_t xy[],
+                             int count, SkPMColor colors[]);
 void ClampX_ClampY_filter_scale(const SkBitmapProcState& s, uint32_t xy[],
                                 int count, int x, int y);
 void ClampX_ClampY_nofilter_scale(const SkBitmapProcState& s, uint32_t xy[],
