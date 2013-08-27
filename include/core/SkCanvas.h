@@ -963,8 +963,6 @@ private:
     SkBounder*  fBounder;
     SkDevice*   fLastDeviceToGainFocus;
     int         fLayerCount;    // number of successful saveLayer calls
-    int         fQuickRejectEnableCountdown;  // number of draws until next attempt at quick reject
-    static const int QUICK_REJECT_SAMPLE_INTERVAL = 10;  // number of times quick reject test is skipped after it fails
 
     void prepareForDeviceDraw(SkDevice*, const SkMatrix&, const SkRegion&,
                               const SkClipStack& clipStack);

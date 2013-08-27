@@ -846,66 +846,11 @@ SkBlitter* SkBlitter::Choose(const SkBitmap& device,
         return blitter;
     }
 
-    SkShader* shader = origPaint.getShader();
-    SkColorFilter* cf = origPaint.getColorFilter();
-    SkXfermode* mode = origPaint.getXfermode();
-
-    // we perform tests to allow early blitting if possible that avoids have to create a copy of the Paint object
-    // as this is relatively expensive
-    if ((mode == NULL) && (cf == NULL) &&
-        ((origPaint.getMaskFilter() == NULL) || (origPaint.getMaskFilter()->getFormat() != SkMask::k3D_Format))) {
-        if (shader && !shader->setContext(device, origPaint, matrix)) {
-            return SkNEW(SkNullBlitter);
-        }
-        switch (device.getConfig()) {
-            case SkBitmap::kA1_Config:
-                SK_PLACEMENT_NEW_ARGS(blitter, SkA1_Blitter,
-                                      storage, storageSize, (device, origPaint));
-                break;
-
-            case SkBitmap::kA8_Config:
-                if (shader) {
-                    SK_PLACEMENT_NEW_ARGS(blitter, SkA8_Shader_Blitter,
-                                          storage, storageSize, (device, origPaint));
-                } else {
-                    SK_PLACEMENT_NEW_ARGS(blitter, SkA8_Blitter,
-                                          storage, storageSize, (device, origPaint));
-                }
-                break;
-
-            case SkBitmap::kARGB_4444_Config:
-                blitter = SkBlitter_ChooseD4444(device, origPaint, storage, storageSize);
-                break;
-
-            case SkBitmap::kRGB_565_Config:
-                blitter = SkBlitter_ChooseD565(device, origPaint, storage, storageSize);
-                break;
-
-            case SkBitmap::kARGB_8888_Config:
-                if (shader) {
-                    SK_PLACEMENT_NEW_ARGS(blitter, SkARGB32_Shader_Blitter,
-                                          storage, storageSize, (device, origPaint));
-                } else if (origPaint.getColor() == SK_ColorBLACK) {
-                    SK_PLACEMENT_NEW_ARGS(blitter, SkARGB32_Black_Blitter,
-                                          storage, storageSize, (device, origPaint));
-                } else if (origPaint.getAlpha() == 0xFF) {
-                    SK_PLACEMENT_NEW_ARGS(blitter, SkARGB32_Opaque_Blitter,
-                                          storage, storageSize, (device, origPaint));
-                } else {
-                    SK_PLACEMENT_NEW_ARGS(blitter, SkARGB32_Blitter,
-                                          storage, storageSize, (device, origPaint));
-                }
-                break;
-
-            default:
-                SkDEBUGFAIL("unsupported device config");
-                SK_PLACEMENT_NEW(blitter, SkNullBlitter, storage, storageSize);
-                break;
-        }
-        return blitter;
-    }
-
     SkPaint paint(origPaint);
+    SkShader* shader = paint.getShader();
+    SkColorFilter* cf = paint.getColorFilter();
+    SkXfermode* mode = paint.getXfermode();
+
     Sk3DShader* shader3D = NULL;
     if (paint.getMaskFilter() != NULL &&
             paint.getMaskFilter()->getFormat() == SkMask::k3D_Format) {

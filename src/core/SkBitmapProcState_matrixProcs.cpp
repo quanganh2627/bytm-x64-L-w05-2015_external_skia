@@ -9,10 +9,6 @@
 #include "SkShader.h"
 #include "SkUtils.h"
 
-#ifdef USE_SSE2
-#include <emmintrin.h>
-#endif
-
 /*  returns 0...(n-1) given any x (positive or negative).
     
     As an example, if n (which is always positive) is 5...
@@ -43,10 +39,6 @@ void decal_filter_scale(uint32_t dst[], SkFixed fx, SkFixed dx, int count);
 #define CHECK_FOR_DECAL
 #if	defined(__ARM_HAVE_NEON)
     #include "SkBitmapProcState_matrix_clamp.h"
-#elif defined USE_SSE2
-    #define ClampX_ClampY_filter_scale_SSE2_with_shader
-    #include "SkBitmapProcState_matrix.h"
-    #undef  ClampX_ClampY_filter_scale_SSE2_with_shader
 #else
     #include "SkBitmapProcState_matrix.h"
 #endif
@@ -215,25 +207,6 @@ void decal_nofilter_scale(uint32_t dst[], SkFixed fx, SkFixed dx, int count)
         dst = (uint32_t *) dst16;
     }
 #else
-#ifdef USE_SSE2
-   if (count >= 8) {
-     __m128i _m_fx, _m_dx;
-     _m_dx = _mm_set1_epi32(dx * 4);
-     _m_fx = _mm_set_epi32(fx + dx * 3, fx + dx *2, fx + dx, fx);
-     fx += ((count >> 3) << 3) * dx;
-     do {
-       __m128i _m_temp1 = _mm_srli_epi32(_m_fx, 16);
-       _m_fx    = _mm_add_epi32(_m_fx, _m_dx);
-       __m128i _m_temp2 = _mm_srli_epi32(_m_fx, 16);
-       _m_fx    = _mm_add_epi32(_m_fx, _m_dx);
-       _m_temp1 = _mm_packs_epi32(_m_temp1, _m_temp2);
-       _mm_storeu_si128((__m128i *)dst, _m_temp1);
-
-       dst   += 4;
-       count -= 8;
-     } while (count >= 8);
-   }
-#else
     for (i = (count >> 2); i > 0; --i)
     {
         *dst++ = pack_two_shorts(fx >> 16, (fx + dx) >> 16);
@@ -242,7 +215,6 @@ void decal_nofilter_scale(uint32_t dst[], SkFixed fx, SkFixed dx, int count)
         fx += dx+dx;
     }
     count &= 3;
-#endif
 #endif
 
     uint16_t* xx = (uint16_t*)dst;
@@ -288,28 +260,6 @@ void decal_filter_scale(uint32_t dst[], SkFixed fx, SkFixed dx, int count)
             wide_fx2 = vaddq_s32(wide_fx2, wide_dx8);
             count -= 8;
         }
-    }
-#endif
-
-#ifdef USE_SSE2
-    if (count >= 4) {
-       __m128i _m_fx, _m_dx, _m_one;
-       _m_dx  = _mm_set1_epi32(dx * 4);
-       _m_fx  = _mm_set_epi32(fx + dx * 3, fx + dx *2, fx + dx, fx);
-       _m_one = _mm_set1_epi32(1);
-       fx += ((count >> 2) << 2) * dx;
-       do {
-         __m128i _m_temp1 = _mm_srli_epi32(_m_fx, 12);
-         _m_temp1 = _mm_slli_epi32(_m_temp1, 14);
-         __m128i _m_temp2 = _mm_srli_epi32(_m_fx, 16);
-         _m_temp2 = _mm_add_epi32(_m_temp2, _m_one);
-         _m_temp1 = _mm_or_si128(_m_temp1, _m_temp2);
-         _mm_storeu_si128((__m128i *)dst, _m_temp1);
-
-         _m_fx    = _mm_add_epi32(_m_fx, _m_dx);
-         dst   += 4;
-         count -= 4;
-       } while (count >= 4);
     }
 #endif
 
