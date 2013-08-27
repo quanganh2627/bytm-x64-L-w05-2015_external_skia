@@ -93,6 +93,7 @@ static boolean sk_resync_to_restart(j_decompress_ptr cinfo, int desired) {
 static void sk_term_source(j_decompress_ptr /*cinfo*/) {}
 
 
+#if 0 // UNUSED
 static void skmem_init_source(j_decompress_ptr cinfo) {
     skjpeg_source_mgr*  src = (skjpeg_source_mgr*)cinfo->src;
     src->next_input_byte = (const JOCTET*)src->fMemoryBase;
@@ -119,6 +120,7 @@ static boolean skmem_resync_to_restart(j_decompress_ptr cinfo, int desired) {
 }
 
 static void skmem_term_source(j_decompress_ptr /*cinfo*/) {}
+#endif
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -163,9 +165,7 @@ static void sk_init_destination(j_compress_ptr cinfo) {
 static boolean sk_empty_output_buffer(j_compress_ptr cinfo) {
     skjpeg_destination_mgr* dest = (skjpeg_destination_mgr*)cinfo->dest;
 
-//  if (!dest->fStream->write(dest->fBuffer, skjpeg_destination_mgr::kBufferSize - dest->free_in_buffer))
-    if (!dest->fStream->write(dest->fBuffer,
-            skjpeg_destination_mgr::kBufferSize)) {
+    if (!dest->fStream->write(dest->fBuffer, skjpeg_destination_mgr::kBufferSize - dest->free_in_buffer)){
         ERREXIT(cinfo, JERR_FILE_WRITE);
         return false;
     }
