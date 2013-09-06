@@ -205,7 +205,8 @@ void SCALE_FILTER_NAME(const SkBitmapProcState& s,
     } else
 #endif
     {
-#ifdef SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSE2 && ClampX_ClampY_filter_scale_SSE2_with_shader
+#if SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSE2
+#ifdef ClampX_ClampY_filter_scale_SSE2_with_shader
     if(count >=4) {
         float maxX_float = (float)maxX;
         __m128i _m_fx, _m_dx, _m_one, _m_i, _m_F, _m_temp1, _m_temp2, _m_temp3;
@@ -243,6 +244,7 @@ void SCALE_FILTER_NAME(const SkBitmapProcState& s,
     }
     if(count == 0)
         return;
+#endif
 #endif
         do {
             SkFixed fixedFx = SkFractionalIntToFixed(fx);

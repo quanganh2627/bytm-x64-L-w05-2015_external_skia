@@ -9,7 +9,7 @@
 #include "SkShader.h"
 #include "SkUtils.h"
 #include "SkUtilsArm.h"
-#ifdef SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSE2
+#if SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSE2
 #include <emmintrin.h>
 #endif
 // Helper to ensure that when we shift down, we do it w/o sign-extension
@@ -87,7 +87,7 @@ extern const SkBitmapProcState::MatrixProc RepeatX_RepeatY_Procs_neon[];
 #define TILEX_LOW_BITS(fx, max) (((fx) >> 12) & 0xF)
 #define TILEY_LOW_BITS(fy, max) (((fy) >> 12) & 0xF)
 #define CHECK_FOR_DECAL
-#if defined SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSE2
+#if SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSE2
     #define ClampX_ClampY_filter_scale_SSE2_with_shader
     #include "SkBitmapProcState_matrix.h"
     #undef  ClampX_ClampY_filter_scale_SSE2_with_shader
@@ -245,7 +245,7 @@ void decal_nofilter_scale(uint32_t dst[], SkFixed fx, SkFixed dx, int count)
 {
     int i;
 
-#ifdef SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSE2
+#if SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSE2
    if (count >= 8) {
      __m128i _m_fx, _m_dx;
      _m_dx = _mm_set1_epi32(dx * 4);
@@ -283,7 +283,7 @@ void decal_nofilter_scale(uint32_t dst[], SkFixed fx, SkFixed dx, int count)
 void decal_filter_scale(uint32_t dst[], SkFixed fx, SkFixed dx, int count)
 {
 
-#ifdef SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSE2
+#if SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSE2
     if (count >= 4) {
        __m128i _m_fx, _m_dx, _m_one;
        _m_dx  = _mm_set1_epi32(dx * 4);
