@@ -109,8 +109,6 @@ static bool cachedHasSSSE3() {
 
 void SkBitmapProcState::platformProcs() {
     if (cachedHasSSSE3()) {
-#if !defined(SK_BUILD_FOR_ANDROID)
-        // Disable SSSE3 optimization for Android x86
         if (fSampleProc32 == S32_opaque_D32_filter_DX) {
             fSampleProc32 = S32_opaque_D32_filter_DX_SSSE3;
 
@@ -131,7 +129,6 @@ void SkBitmapProcState::platformProcs() {
         } else if (fSampleProc32 == S32_alpha_D32_filter_DXDY) {
             fSampleProc32 = S32_alpha_D32_filter_DXDY_SSSE3;
         }
-#endif
     } else if (cachedHasSSE2()) {
         if (fSampleProc32 == S32_opaque_D32_filter_DX) {
             fSampleProc32 = S32_opaque_D32_filter_DX_SSE2;
@@ -144,7 +141,7 @@ void SkBitmapProcState::platformProcs() {
         }
     }
 
-    if (hasSSE2()) {
+    if (cachedHasSSE2()) {
         if (fSampleProc32 == S32_opaque_D32_nofilter_DX) {
             fSampleProc32 = S32_opaque_D32_nofilter_DX_SSE2;
         } else if (fSampleProc32 == S32_opaque_D32_filter_DXDY) {
