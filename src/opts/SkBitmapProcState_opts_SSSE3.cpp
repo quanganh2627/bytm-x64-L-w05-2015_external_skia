@@ -721,4 +721,79 @@ void S32_alpha_D32_filter_DXDY_SSSE3(const SkBitmapProcState& s,
                                    const uint32_t* xy,
                                    int count, uint32_t* colors) {
     S32_generic_D32_filter_DXDY_SSSE3<true>(s, xy, count, colors);
+
+}
+/*
+ * sum  = a00(16-y)(16-x) + a10(y)(16-x)
+ *      + a01(16-y)(x)    + a11(y)(x)
+ *
+ */
+extern void S32_Opaque_D32_filter_line_SSSE3(uint32_t* row0, uint32_t* row1,
+                                     SkFixed fx, unsigned subY,
+                                     uint32_t* colors, SkFixed dx, int count) {
+    unsigned  subX = (((fx) >> 12) & 0xF);
+
+    unsigned x0 = ((fx) >> 16);
+    // ( 0,  0,  0,  0,  0,  0,  0, 16)
+    __m128i sixteen = _mm_cvtsi32_si128(16);
+
+    // ( 0,  0,  0,  0, 16, 16, 16, 16)
+    sixteen = _mm_shufflelo_epi16(sixteen, 0);
+
+    __m128i allY = _mm_cvtsi32_si128((subY << 8) | (16 - subY));
+
+    // (y, 16-y, y, 16-y,y,16-y,y,16-y)
+    allY = _mm_shufflelo_epi16(allY, 0);
+
+    // (y,16-y, y,16-y,y,16-y,y,16-y,y,16-y,y,16-y,y,16-y,y,16-y)
+    allY = _mm_shuffle_epi32(allY, 0);
+
+    // ( 0,  0,  0,  0,  0,  0,  0,  0)
+    __m128i zero = _mm_setzero_si128();
+
+    __m128i allX = _mm_cvtsi32_si128(subX);
+        // (,,,,x,x,x,x)
+    allX = _mm_shufflelo_epi16(allX, 0);
+    // (,,,,16-x,16-x,16-x,16-x)
+    __m128i negX = _mm_sub_epi16(sixteen, allX);
+    // (x,x,x,x,16-x,16-x,16-x,16-x)
+    negX = _mm_unpacklo_epi64(negX, allX);
+
+    do {
+        __m128i a00 = _mm_cvtsi32_si128(row0[x0]);
+        __m128i a01 = _mm_cvtsi32_si128(row0[x0+1]);
+        __m128i a10 = _mm_cvtsi32_si128(row1[x0]);
+        __m128i a11 = _mm_cvtsi32_si128(row1[x0+1]);
+
+        // (0, 0, a10, a00)
+        __m128i a01a00 = _mm_unpacklo_epi32(a00, a01);
+        // (0, 0, a11, a10)
+        __m128i a11a10 = _mm_unpacklo_epi32(a10, a11);
+
+        // (....A10,A00,R10,R00,G10,G00,B10,B00)
+        a01a00= _mm_unpacklo_epi8(a01a00, a11a10);
+        // [..A00*(16-y)+ A10*y, R00*(16-y)+ R10*y, G00*(16-y)+ G10*y, B00*(16-y)+ B10*y]
+        __m128i sum = _mm_maddubs_epi16(a01a00, allY);
+
+        // [...(G00*(16-y)+ G10*y)(16-x),(B00*(16-y)+ B10*y) * (16-x)]
+        sum = _mm_mullo_epi16(sum, negX);
+        // [...(G01*(16-y)+ G11*y)(x),(B01*(16-y)+ B11*y) * (x)]
+        __m128i shifted = _mm_shuffle_epi32(sum, 0xE);
+        sum = _mm_add_epi16(sum, shifted);
+        sum = _mm_srli_epi16(sum, 8);
+        // Pack lower 4 16 bit values of sum into lower 4 bytes.
+        sum = _mm_packus_epi16(sum, shifted);
+        *colors++ = _mm_cvtsi128_si32(sum);
+
+        fx+= dx;
+        x0 = ((fx) >> 16);
+        subX = (((fx) >> 12) & 0xF);
+        allX = _mm_cvtsi32_si128(subX);
+        // (,,,,x,x,x,x)
+        allX = _mm_shufflelo_epi16(allX, 0);
+        // (,,,,16-x,16-x,16-x,16-x)
+        negX = _mm_sub_epi16(sixteen, allX);
+        // (x,x,x,x,16-x,16-x,16-x,16-x)
+        negX = _mm_unpacklo_epi64(negX, allX);
+    } while (--count > 0);
 }
