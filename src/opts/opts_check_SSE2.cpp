@@ -14,6 +14,7 @@
 #include "SkBlitRow_opts_SSE2.h"
 #include "SkUtils_opts_SSE2.h"
 #include "SkUtils.h"
+#include "SkShader.h"
 
 #include "SkRTConf.h"
 
@@ -121,6 +122,15 @@ void SkBitmapProcState::platformProcs() {
     if (cachedHasSSSE3()) {
         if (fSampleProc32 == S32_opaque_D32_filter_DX) {
             fSampleProc32 = S32_opaque_D32_filter_DX_SSSE3;
+
+            bool repeatXY = SkShader::kRepeat_TileMode == fTileModeX &&
+                            SkShader::kRepeat_TileMode == fTileModeY;
+            const unsigned max = fBitmap->width() ;
+            // SSSE3 opted only if more than 4 pixels, dx=non-zero
+            if ((fInvSx > 0) && repeatXY && (max > 4) && ((fInvSx & 0xFFFF) != 0))
+            {
+                fShaderProc32 = Repeat_S32_Opaque_D32_filter_DX_shaderproc_opt;
+            }
         } else if (fSampleProc32 == S32_alpha_D32_filter_DX) {
             fSampleProc32 = S32_alpha_D32_filter_DX_SSSE3;
         }
