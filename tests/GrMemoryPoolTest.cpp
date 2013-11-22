@@ -11,7 +11,7 @@
 #include "GrMemoryPool.h"
 #include "SkRandom.h"
 #include "SkTDArray.h"
-#include "SkTScopedPtr.h"
+#include "SkTemplates.h"
 #include "SkInstCnt.h"
 
 namespace {
@@ -47,7 +47,7 @@ public:
 
     SK_DECLARE_INST_COUNT_ROOT(A);
 
-    static A* Create(SkRandom* r);
+    static A* Create(SkMWCRandom* r);
 
     static void SetAllocator(size_t preallocSize, size_t minAllocSize) {
 #if SK_ENABLE_INST_COUNT
@@ -65,11 +65,11 @@ public:
     }
 
 private:
-    static SkTScopedPtr<GrMemoryPool> gPool;
+    static SkAutoTDelete<GrMemoryPool> gPool;
     char fChar;
 };
 SK_DEFINE_INST_COUNT(A);
-SkTScopedPtr<GrMemoryPool> A::gPool;
+SkAutoTDelete<GrMemoryPool> A::gPool;
 
 class B : public A {
 public:
@@ -160,7 +160,7 @@ private:
     typedef A INHERITED;
 };
 
-A* A::Create(SkRandom* r) {
+A* A::Create(SkMWCRandom* r) {
     switch (r->nextRangeU(0, 4)) {
         case 0:
             return new A;
@@ -201,7 +201,7 @@ static void test_memory_pool(skiatest::Reporter* reporter) {
     // number of iterations
     static const int kCheckPeriod = 500;
 
-    SkRandom r;
+    SkMWCRandom r;
     for (size_t s = 0; s < SK_ARRAY_COUNT(gSizes); ++s) {
         A::SetAllocator(gSizes[s][0], gSizes[s][1]);
         for (size_t c = 0; c < SK_ARRAY_COUNT(gCreateFraction); ++c) {

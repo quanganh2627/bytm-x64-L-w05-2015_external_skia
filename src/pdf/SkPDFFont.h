@@ -49,7 +49,7 @@ public:
     class F2BIter {
     public:
         explicit F2BIter(const SkPDFGlyphSetMap& map);
-        FontGlyphSetPair* next() const;
+        const FontGlyphSetPair* next() const;
         void reset(const SkPDFGlyphSetMap& map);
 
     private:
@@ -81,7 +81,8 @@ class SkPDFFont : public SkPDFDict {
 public:
     virtual ~SkPDFFont();
 
-    virtual void getResources(SkTDArray<SkPDFObject*>* resourceList);
+    virtual void getResources(const SkTSet<SkPDFObject*>& knownResourceObjects,
+                              SkTSet<SkPDFObject*>* newResourceObjects);
 
     /** Returns the typeface represented by this class. Returns NULL for the
      *  default typeface.
@@ -133,7 +134,7 @@ public:
 protected:
     // Common constructor to handle common members.
     SkPDFFont(SkAdvancedTypefaceMetrics* fontInfo, SkTypeface* typeface,
-              uint16_t glyphID, bool descendantFont);
+              SkPDFDict* relatedFontDescriptor);
 
     // Accessors for subclass.
     SkAdvancedTypefaceMetrics* fontInfo();
@@ -164,7 +165,7 @@ protected:
     // Create instances of derived types based on fontInfo.
     static SkPDFFont* Create(SkAdvancedTypefaceMetrics* fontInfo,
                              SkTypeface* typeface, uint16_t glyphID,
-                             SkPDFDict* fontDescriptor);
+                             SkPDFDict* relatedFontDescriptor);
 
     static bool Find(uint32_t fontID, uint16_t glyphID, int* index);
 

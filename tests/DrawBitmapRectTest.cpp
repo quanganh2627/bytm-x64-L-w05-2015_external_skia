@@ -12,7 +12,7 @@
 #include "SkRandom.h"
 #include "SkMatrixUtils.h"
 
-static void rand_matrix(SkMatrix* mat, SkRandom& rand, unsigned mask) {
+static void rand_matrix(SkMatrix* mat, SkMWCRandom& rand, unsigned mask) {
     mat->setIdentity();
     if (mask & SkMatrix::kTranslate_Mask) {
         mat->postTranslate(rand.nextSScalar1(), rand.nextSScalar1());
@@ -29,7 +29,7 @@ static void rand_matrix(SkMatrix* mat, SkRandom& rand, unsigned mask) {
     }
 }
 
-static void rand_size(SkISize* size, SkRandom& rand) {
+static void rand_size(SkISize* size, SkMWCRandom& rand) {
     size->set(rand.nextU() & 0xFFFF, rand.nextU() & 0xFFFF);
 }
 
@@ -43,7 +43,7 @@ static void test_treatAsSprite(skiatest::Reporter* reporter) {
 
     SkMatrix mat;
     SkISize  size;
-    SkRandom rand;
+    SkMWCRandom rand;
 
     // assert: translate-only no-filter can always be treated as sprite
     for (int i = 0; i < 1000; ++i) {
@@ -102,13 +102,13 @@ static void assert_ifDrawnTo(skiatest::Reporter* reporter,
     for (int y = 0; y < bm.height(); ++y) {
         for (int x = 0; x < bm.width(); ++x) {
             if (shouldBeDrawn) {
-                if (0 == *bm.getAddr32(x, y)) {
+                if (SK_ColorTRANSPARENT == *bm.getAddr32(x, y)) {
                     REPORTER_ASSERT(reporter, false);
                     return;
                 }
             } else {
                 // should not be drawn
-                if (*bm.getAddr32(x, y)) {
+                if (SK_ColorTRANSPARENT != *bm.getAddr32(x, y)) {
                     REPORTER_ASSERT(reporter, false);
                     return;
                 }
@@ -202,7 +202,7 @@ static void test_giantrepeat_crbug118018(skiatest::Reporter* reporter) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-static void test_nan_antihair(skiatest::Reporter* reporter) {
+static void test_nan_antihair() {
     SkBitmap bm;
     bm.setConfig(SkBitmap::kARGB_8888_Config, 20, 20);
     bm.allocPixels();
@@ -264,7 +264,7 @@ static void TestDrawBitmapRect(skiatest::Reporter* reporter) {
     // ensure that we draw nothing if srcR does not intersect the bitmap
     REPORTER_ASSERT(reporter, check_for_all_zeros(dst));
 
-    test_nan_antihair(reporter);
+    test_nan_antihair();
     test_giantrepeat_crbug118018(reporter);
 
     test_treatAsSprite(reporter);

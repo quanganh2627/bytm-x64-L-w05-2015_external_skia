@@ -12,11 +12,10 @@
 #include "SkMaskGamma.h"
 #include "SkMatrix.h"
 #include "SkPaint.h"
+#include "SkTypeface.h"
 
 #ifdef SK_BUILD_FOR_ANDROID
-    #include "SkLanguage.h"
-    //For SkFontID
-    #include "SkTypeface.h"
+    #include "SkPaintOptionsAndroid.h"
 #endif
 
 struct SkGlyph;
@@ -37,10 +36,6 @@ struct SkScalerContextRec {
     SkScalar    fFrameWidth, fMiterLimit;
 #ifdef SK_SUPPORT_HINTING_SCALE_FACTOR
     SkScalar    fHintingScaleFactor;
-#endif
-#ifdef SK_BUILD_FOR_ANDROID
-    SkLanguage fLanguage;
-    SkPaint::FontVariant fFontVariant;
 #endif
 
     //These describe the parameters to create (uniquely identify) the pre-blend.
@@ -139,13 +134,14 @@ public:
         kHintingBit1_Flag         = 0x0080,
         kHintingBit2_Flag         = 0x0100,
 
-        // these should only ever be set if fMaskFormat is LCD16 or LCD32
+        // Pixel geometry information.
+        // only meaningful if fMaskFormat is LCD16 or LCD32
         kLCD_Vertical_Flag        = 0x0200,    // else Horizontal
         kLCD_BGROrder_Flag        = 0x0400,    // else RGB order
 
-        // Generate A8 from LCD source (for GDI), only meaningful if fMaskFormat is kA8
-        // Perhaps we can store this (instead) in fMaskFormat, in hight bit?
-        kGenA8FromLCD_Flag        = 0x0800,
+        // Generate A8 from LCD source (for GDI and CoreGraphics).
+        // only meaningful if fMaskFormat is kA8
+        kGenA8FromLCD_Flag        = 0x0800, // could be 0x200 (bit meaning dependent on fMaskFormat)
     };
 
     // computed values
@@ -154,8 +150,10 @@ public:
     };
 
 
-    SkScalerContext(const SkDescriptor* desc);
+    SkScalerContext(SkTypeface*, const SkDescriptor*);
     virtual ~SkScalerContext();
+
+    SkTypeface* getTypeface() const { return fTypeface.get(); }
 
     SkMask::Format getMaskFormat() const {
         return (SkMask::Format)fRec.fMaskFormat;
@@ -187,8 +185,7 @@ public:
     void        getMetrics(SkGlyph*);
     void        getImage(const SkGlyph&);
     void        getPath(const SkGlyph&, SkPath*);
-    void        getFontMetrics(SkPaint::FontMetrics* mX,
-                               SkPaint::FontMetrics* mY);
+    void        getFontMetrics(SkPaint::FontMetrics*);
 
 #ifdef SK_BUILD_FOR_ANDROID
     unsigned getBaseGlyphCount(SkUnichar charCode);
@@ -202,7 +199,6 @@ public:
                                const SkMatrix*, Rec* rec);
     static inline void PostMakeRec(const SkPaint&, Rec*);
 
-    static SkScalerContext* Create(const SkDescriptor*);
     static SkMaskGamma::PreBlend GetMaskPreBlend(const Rec& rec);
 
 protected:
@@ -223,8 +219,14 @@ protected:
     void forceGenerateImageFromPath() { fGenerateImageFromPath = true; }
 
 private:
-    SkScalerContext* getContextFromChar(SkUnichar uni, unsigned& glyphID);
+    // never null
+    SkAutoTUnref<SkTypeface> fTypeface;
 
+#ifdef SK_BUILD_FOR_ANDROID
+    SkPaintOptionsAndroid fPaintOptionsAndroid;
+#endif
+
+    // optional object, which may be null
     SkPathEffect*   fPathEffect;
     SkMaskFilter*   fMaskFilter;
     SkRasterizer*   fRasterizer;
@@ -236,12 +238,21 @@ private:
     void internalGetPath(const SkGlyph& glyph, SkPath* fillPath,
                          SkPath* devPath, SkMatrix* fillToDevMatrix);
 
+    // Return the context associated with the next logical typeface, or NULL if
+    // there are no more entries in the fallback chain.
+    SkScalerContext* allocNextContext() const;
+
     // return the next context, treating fNextContext as a cache of the answer
     SkScalerContext* getNextContext();
 
     // returns the right context from our link-list for this glyph. If no match
     // is found, just returns the original context (this)
     SkScalerContext* getGlyphContext(const SkGlyph& glyph);
+
+    // returns the right context from our link-list for this char. If no match
+    // is found it returns NULL. If a match is found then the glyphID param is
+    // set to the glyphID that maps to the provided char.
+    SkScalerContext* getContextFromChar(SkUnichar uni, uint16_t* glyphID);
 
     // link-list of context, to handle missing chars. null-terminated.
     SkScalerContext* fNextContext;
@@ -260,6 +271,9 @@ private:
 #define kPathEffect_SkDescriptorTag     SkSetFourByteTag('p', 't', 'h', 'e')
 #define kMaskFilter_SkDescriptorTag     SkSetFourByteTag('m', 's', 'k', 'f')
 #define kRasterizer_SkDescriptorTag     SkSetFourByteTag('r', 'a', 's', 't')
+#ifdef SK_BUILD_FOR_ANDROID
+#define kAndroidOpts_SkDescriptorTag    SkSetFourByteTag('a', 'n', 'd', 'r')
+#endif
 
 ///////////////////////////////////////////////////////////////////////////////
 

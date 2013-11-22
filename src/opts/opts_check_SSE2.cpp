@@ -7,6 +7,7 @@
 
 #include "SkBitmapProcState_opts_SSE2.h"
 #include "SkBitmapProcState_opts_SSSE3.h"
+#include "SkBitmapFilter_opts_SSE2.h"
 #include "SkBlitMask.h"
 #include "SkBlitRow.h"
 #include "SkBlitRect_opts_SSE2.h"
@@ -14,10 +15,17 @@
 #include "SkUtils_opts_SSE2.h"
 #include "SkUtils.h"
 
+#include "SkRTConf.h"
+
 #if defined(_MSC_VER) && defined(_WIN64)
 #include <intrin.h>
 #endif
 
+#include "SkShader.h"
+extern void Repeate_S32_Opaque_D32_filter_DX_shaderproc_opt(
+                                       const SkBitmapProcState& s,
+                                       int x, int y, uint32_t* colors,
+                                       int count);
 /* This file must *not* be compiled with -msse or -msse2, otherwise
    gcc may generate sse2 even for scalar ops (and thus give an invalid
    instruction on Pentium3 on the code below).  Only files named *_SSE2.cpp
@@ -102,12 +110,31 @@ static bool cachedHasSSSE3() {
     return gHasSSSE3;
 }
 
+SK_CONF_DECLARE( bool, c_hqfilter_sse, "bitmap.filter.highQualitySSE", false, "Use SSE optimized version of high quality image filters");
+
+void SkBitmapProcState::platformConvolutionProcs() {
+    if (cachedHasSSE2()) {
+        fConvolutionProcs->fExtraHorizontalReads = 3;
+        fConvolutionProcs->fConvolveVertically = &convolveVertically_SSE2;
+        fConvolutionProcs->fConvolve4RowsHorizontally = &convolve4RowsHorizontally_SSE2;
+        fConvolutionProcs->fConvolveHorizontally = &convolveHorizontally_SSE2;
+        fConvolutionProcs->fApplySIMDPadding = &applySIMDPadding_SSE2;
+    }
+}
+
 void SkBitmapProcState::platformProcs() {
     if (cachedHasSSSE3()) {
-#if !defined(SK_BUILD_FOR_ANDROID)
-        // Disable SSSE3 optimization for Android x86
         if (fSampleProc32 == S32_opaque_D32_filter_DX) {
             fSampleProc32 = S32_opaque_D32_filter_DX_SSSE3;
+
+            bool repeatXY = SkShader::kRepeat_TileMode == fTileModeX &&
+                            SkShader::kRepeat_TileMode == fTileModeY;
+            const unsigned max = fBitmap->width() ;
+            // SSSE3 opted only if more than 4 pixels, dx=non-zero
+            if ((fInvSx > 0) && repeatXY && (max > 4) && ((fInvSx & 0xFFFF) != 0))
+            {
+                fShaderProc32 = Repeate_S32_Opaque_D32_filter_DX_shaderproc_opt;
+            }
         } else if (fSampleProc32 == S32_alpha_D32_filter_DX) {
             fSampleProc32 = S32_alpha_D32_filter_DX_SSSE3;
         }
@@ -117,12 +144,17 @@ void SkBitmapProcState::platformProcs() {
         } else if (fSampleProc32 == S32_alpha_D32_filter_DXDY) {
             fSampleProc32 = S32_alpha_D32_filter_DXDY_SSSE3;
         }
-#endif
     } else if (cachedHasSSE2()) {
         if (fSampleProc32 == S32_opaque_D32_filter_DX) {
             fSampleProc32 = S32_opaque_D32_filter_DX_SSE2;
         } else if (fSampleProc32 == S32_alpha_D32_filter_DX) {
             fSampleProc32 = S32_alpha_D32_filter_DX_SSE2;
+        } else if (fSampleProc32 == S32_opaque_D32_nofilter_DX) {
+            fSampleProc32 = S32_opaque_D32_nofilter_DX_SSE2;
+        } else if (fSampleProc32 == S32_opaque_D32_filter_DXDY) {
+            fSampleProc32 = S32_opaque_D32_filter_DXDY_SSE2_asm;
+        } else if (fSampleProc32 == S32_alpha_D32_filter_DXDY) {
+            fSampleProc32 = S32_alpha_D32_filter_DXDY_SSE2_asm;
         }
 
         if (fSampleProc16 == S32_D16_filter_DX) {
@@ -142,6 +174,11 @@ void SkBitmapProcState::platformProcs() {
         } else if (fMatrixProc == ClampX_ClampY_nofilter_affine) {
             fMatrixProc = ClampX_ClampY_nofilter_affine_SSE2;
         }
+        if (c_hqfilter_sse) {
+            if (fShaderProc32 == highQualityFilter) {
+                fShaderProc32 = highQualityFilter_SSE2;
+            }
+        }
     }
 }
 
@@ -152,12 +189,28 @@ static SkBlitRow::Proc32 platform_32_procs[] = {
     S32A_Blend_BlitRow32_SSE2,          // S32A_Blend,
 };
 
-SkBlitRow::Proc SkBlitRow::PlatformProcs4444(unsigned flags) {
-    return NULL;
-}
+static SkBlitRow::Proc platform_565_procs[] = {
+    // no dither
+    S32_D565_Opaque_SSE2,               // S32_D565_Opaque,
+    S32_D565_Blend_SSE2,                // S32_D565_Blend,
+
+    S32A_D565_Opaque_SSE2,              // S32A_D565_Opaque
+    S32A_D565_Blend_SSE2,               // S32A_D565_Blend
+
+    // dither
+    S32_D565_Opaque_Dither_SSE2,        // S32_D565_Opaque_Dither,
+    S32_D565_Blend_Dither_SSE2,         // S32_D565_Blend_Dither,
+
+    S32A_D565_Opaque_Dither_SSE2,       // S32A_D565_Opaque_Dither
+    NULL                                // S32A_D565_Blend_Dither
+};
 
 SkBlitRow::Proc SkBlitRow::PlatformProcs565(unsigned flags) {
-    return NULL;
+    if (hasSSE2()) {
+        return platform_565_procs[flags];
+    } else {
+        return NULL;
+    }
 }
 
 SkBlitRow::ColorProc SkBlitRow::PlatformColorProc() {

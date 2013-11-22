@@ -80,6 +80,8 @@ static bool bits_isonly(int value, int mask) {
 static void test_constructor(skiatest::Reporter* reporter) {
     // Allocate a matrix on the heap
     SkMatrix44* placeholderMatrix = new SkMatrix44();
+    SkAutoTDelete<SkMatrix44> deleteMe(placeholderMatrix);
+
     for (int row = 0; row < 4; ++row) {
         for (int col = 0; col < 4; ++col) {
             placeholderMatrix->setDouble(row, col, row * col);
@@ -229,6 +231,17 @@ static void test_gettype(skiatest::Reporter* reporter) {
 
     matrix.set(3, 2, 1);
     REPORTER_ASSERT(reporter, matrix.getType() & SkMatrix44::kPerspective_Mask);
+
+    // ensure that negative zero is treated as zero
+    SkMScalar dx = 0;
+    SkMScalar dy = 0;
+    SkMScalar dz = 0;
+    matrix.setTranslate(-dx, -dy, -dz);
+    REPORTER_ASSERT(reporter, matrix.isIdentity());
+    matrix.preTranslate(-dx, -dy, -dz);
+    REPORTER_ASSERT(reporter, matrix.isIdentity());
+    matrix.postTranslate(-dx, -dy, -dz);
+    REPORTER_ASSERT(reporter, matrix.isIdentity());
 }
 
 static void test_common_angles(skiatest::Reporter* reporter) {

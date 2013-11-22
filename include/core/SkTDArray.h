@@ -69,6 +69,9 @@ public:
                 (a.fCount == 0 ||
                  !memcmp(a.fArray, b.fArray, a.fCount * sizeof(T)));
     }
+    friend bool operator!=(const SkTDArray<T>& a, const SkTDArray<T>& b) {
+        return !(a == b);
+    }
 
     void swap(SkTDArray<T>& other) {
         SkTSwap(fArray, other.fArray);
@@ -102,14 +105,24 @@ public:
      */
     size_t bytes() const { return fCount * sizeof(T); }
 
-    T*  begin() const { return fArray; }
-    T*  end() const { return fArray ? fArray + fCount : NULL; }
-    T&  operator[](int index) const {
+    T*  begin() { return fArray; }
+    const T*  begin() const { return fArray; }
+    T*  end() { return fArray ? fArray + fCount : NULL; }
+    const T*  end() const { return fArray ? fArray + fCount : NULL; }
+
+    T&  operator[](int index) {
+        SkASSERT((unsigned)index < fCount);
+        return fArray[index];
+    }
+    const T&  operator[](int index) const {
         SkASSERT((unsigned)index < fCount);
         return fArray[index];
     }
 
-    T&  getAt(int index) const {
+    T&  getAt(int index)  {
+        return (*this)[index];
+    }
+    const T&  getAt(int index) const {
         return (*this)[index];
     }
 
@@ -255,7 +268,7 @@ public:
     }
 
     void copy(T* dst) const {
-        this->copyRange(0, fCount, dst);
+        this->copyRange(dst, 0, fCount);
     }
 
     // routines to treat the array like a stack
@@ -306,7 +319,7 @@ public:
         this->reset();
     }
 
-    void visitAll(void visitor(T&)) const {
+    void visitAll(void visitor(T&)) {
         T* stop = this->end();
         for (T* curr = this->begin(); curr < stop; curr++) {
             if (*curr) {

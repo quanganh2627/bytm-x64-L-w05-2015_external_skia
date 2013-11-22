@@ -14,22 +14,27 @@ static void test_chunkalloc(skiatest::Reporter* reporter) {
     SkChunkAlloc alloc(min);
 
     REPORTER_ASSERT(reporter, 0 == alloc.totalCapacity());
+    REPORTER_ASSERT(reporter, 0 == alloc.totalUsed());
     REPORTER_ASSERT(reporter, 0 == alloc.blockCount());
     REPORTER_ASSERT(reporter, !alloc.contains(NULL));
     REPORTER_ASSERT(reporter, !alloc.contains(reporter));
 
     alloc.reset();
     REPORTER_ASSERT(reporter, 0 == alloc.totalCapacity());
+    REPORTER_ASSERT(reporter, 0 == alloc.totalUsed());
     REPORTER_ASSERT(reporter, 0 == alloc.blockCount());
 
     size_t size = min >> 1;
     void* ptr = alloc.allocThrow(size);
     REPORTER_ASSERT(reporter, alloc.totalCapacity() >= size);
+    REPORTER_ASSERT(reporter, alloc.totalUsed() == size);
     REPORTER_ASSERT(reporter, alloc.blockCount() > 0);
     REPORTER_ASSERT(reporter, alloc.contains(ptr));
 
     alloc.reset();
     REPORTER_ASSERT(reporter, !alloc.contains(ptr));
+    REPORTER_ASSERT(reporter, 0 == alloc.totalCapacity());
+    REPORTER_ASSERT(reporter, 0 == alloc.totalUsed());
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -79,9 +84,10 @@ static void test_16(skiatest::Reporter* reporter) {
             uint16_t* base = &buffer[PAD + alignment];
             sk_memset16(base, VALUE16, count);
 
-            compare16(buffer,       0,       PAD + alignment);
-            compare16(base,         VALUE16, count);
-            compare16(base + count, 0,       TOTAL - count - PAD - alignment);
+            REPORTER_ASSERT(reporter,
+                compare16(buffer,       0,       PAD + alignment) &&
+                compare16(base,         VALUE16, count) &&
+                compare16(base + count, 0,       TOTAL - count - PAD - alignment));
         }
     }
 }
@@ -96,9 +102,10 @@ static void test_32(skiatest::Reporter* reporter) {
             uint32_t* base = &buffer[PAD + alignment];
             sk_memset32(base, VALUE32, count);
 
-            compare32(buffer,       0,       PAD + alignment);
-            compare32(base,         VALUE32, count);
-            compare32(base + count, 0,       TOTAL - count - PAD - alignment);
+            REPORTER_ASSERT(reporter,
+                compare32(buffer,       0,       PAD + alignment) &&
+                compare32(base,         VALUE32, count) &&
+                compare32(base + count, 0,       TOTAL - count - PAD - alignment));
         }
     }
 }

@@ -9,6 +9,53 @@
 #include "SkCanvas.h"
 #include "SkPath.h"
 
+static void draw_conic(SkCanvas* canvas, SkScalar weight, const SkPaint& paint) {
+    SkPath path;
+    path.moveTo(100, 100);
+    path.conicTo(300, 100, 300, 300, weight);
+    canvas->drawPath(path, paint);
+}
+
+static void test_conic(SkCanvas* canvas) {
+    SkPaint paint;
+    paint.setAntiAlias(true);
+    paint.setStyle(SkPaint::kStroke_Style);
+
+    static const struct {
+        SkScalar fWeight;
+        SkColor  fColor;
+    } gRec[] = {
+        { 2   , SK_ColorRED },
+        { 1   , SK_ColorGREEN },
+        { 0.5f, SK_ColorBLUE },
+    };
+
+    for (SkScalar width = 0; width <= 20; width += 20) {
+        canvas->save();
+        paint.setStrokeWidth(width);
+        for (size_t i = 0; i < SK_ARRAY_COUNT(gRec); ++i) {
+            paint.setColor(gRec[i].fColor);
+            draw_conic(canvas, gRec[i].fWeight, paint);
+            canvas->translate(-30, 30);
+        }
+        canvas->restore();
+        canvas->translate(300, 0);
+    }
+}
+
+#include "SkGradientShader.h"
+static void test_shallow_gradient(SkCanvas* canvas, SkScalar width, SkScalar height) {
+    SkColor colors[] = { 0xFF7F7F7F, 0xFF7F7F7F, 0xFF000000 };
+    SkScalar pos[] = { 0, 0.35f, SK_Scalar1 };
+    SkPoint pts[] = { { 0, 0 }, { width, height } };
+    SkShader* s = SkGradientShader::CreateLinear(pts, colors, pos,
+                                                 SK_ARRAY_COUNT(colors),
+                                                 SkShader::kClamp_TileMode);
+    SkPaint paint;
+    paint.setShader(s)->unref();
+    canvas->drawPaint(paint);
+}
+
 #include "SkDashPathEffect.h"
 static void test_giant_dash(SkCanvas* canvas) {
     SkPaint paint;
@@ -36,6 +83,8 @@ static void test_giant_dash(SkCanvas* canvas) {
         canvas->translate(0, 4);
     }
 }
+
+
 
 // Reproduces bug found here: http://jsfiddle.net/R8Cu5/1/
 //
@@ -133,8 +182,6 @@ static void test_mask() {
     }
 }
 
-namespace skiagm {
-
 /** Draw a 2px border around the target, then red behind the target;
     set the clip to match the target, then draw >> the target in blue.
 */
@@ -190,22 +237,28 @@ static void draw_rect_tests (SkCanvas* canvas) {
    border, with no red.
 */
 
-class AAClipGM : public GM {
+class AAClipGM : public skiagm::GM {
 public:
     AAClipGM() {
 
     }
 
 protected:
-    virtual SkString onShortName() {
+    virtual SkString onShortName() SK_OVERRIDE {
         return SkString("aaclip");
     }
 
-    virtual SkISize onISize() {
-        return make_isize(640, 480);
+    virtual SkISize onISize() SK_OVERRIDE {
+        return SkISize::Make(640, 480);
     }
 
     virtual void onDraw(SkCanvas* canvas) SK_OVERRIDE {
+        if (false) { test_conic(canvas); return; }
+        if (false) {
+            SkRect bounds;
+            canvas->getClipBounds(&bounds);
+            test_shallow_gradient(canvas, bounds.width(), bounds.height()); return;
+        }
         if (false) {
             test_giant_dash(canvas); return;
         }
@@ -240,12 +293,7 @@ protected:
     virtual uint32_t onGetFlags() const { return kSkipPipe_Flag; }
 
 private:
-    typedef GM INHERITED;
+    typedef skiagm::GM INHERITED;
 };
 
-//////////////////////////////////////////////////////////////////////////////
-
-static GM* MyFactory(void*) { return new AAClipGM; }
-static GMRegistry reg(MyFactory);
-
-}
+DEF_GM( return SkNEW(AAClipGM); )

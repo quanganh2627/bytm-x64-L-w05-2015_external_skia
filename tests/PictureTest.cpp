@@ -8,6 +8,7 @@
 #include "SkCanvas.h"
 #include "SkColorPriv.h"
 #include "SkData.h"
+#include "SkError.h"
 #include "SkPaint.h"
 #include "SkPicture.h"
 #include "SkRandom.h"
@@ -73,7 +74,7 @@ static SkPicture* record_bitmaps(const SkBitmap bm[], const SkPoint pos[],
     return pic;
 }
 
-static void rand_rect(SkRect* rect, SkRandom& rand, SkScalar W, SkScalar H) {
+static void rand_rect(SkRect* rect, SkMWCRandom& rand, SkScalar W, SkScalar H) {
     rect->fLeft   = rand.nextRangeScalar(-W, 2*W);
     rect->fTop    = rand.nextRangeScalar(-H, 2*H);
     rect->fRight  = rect->fLeft + rand.nextRangeScalar(0, W);
@@ -176,7 +177,7 @@ static void test_gatherpixelrefs(skiatest::Reporter* reporter) {
         drawbitmap_proc, drawbitmaprect_proc, drawshader_proc
     };
 
-    SkRandom rand;
+    SkMWCRandom rand;
     for (size_t k = 0; k < SK_ARRAY_COUNT(procs); ++k) {
         SkAutoTUnref<SkPicture> pic(record_bitmaps(bm, pos, N, procs[k]));
 
@@ -188,9 +189,11 @@ static void test_gatherpixelrefs(skiatest::Reporter* reporter) {
             r.offset(pos[i].fX, pos[i].fY);
             SkAutoDataUnref data(SkPictureUtils::GatherPixelRefs(pic, r));
             REPORTER_ASSERT(reporter, data);
-            int count = data->size() / sizeof(SkPixelRef*);
-            REPORTER_ASSERT(reporter, 1 == count);
-            REPORTER_ASSERT(reporter, *(SkPixelRef**)data->data() == refs[i]);
+            if (data) {
+                int count = data->size() / sizeof(SkPixelRef*);
+                REPORTER_ASSERT(reporter, 1 == count);
+                REPORTER_ASSERT(reporter, *(SkPixelRef**)data->data() == refs[i]);
+            }
         }
 
         // Test a bunch of random (mostly) rects, and compare the gather results
@@ -259,7 +262,7 @@ static void test_serializing_empty_picture() {
 }
 #endif
 
-static void rand_op(SkCanvas* canvas, SkRandom& rand) {
+static void rand_op(SkCanvas* canvas, SkMWCRandom& rand) {
     SkPaint paint;
     SkRect rect = SkRect::MakeWH(50, 50);
 
@@ -279,11 +282,11 @@ static void rand_op(SkCanvas* canvas, SkRandom& rand) {
     }
 }
 
-static void test_peephole(skiatest::Reporter* reporter) {
-    SkRandom rand;
+static void test_peephole() {
+    SkMWCRandom rand;
 
     for (int j = 0; j < 100; j++) {
-        SkRandom rand2(rand.getSeed()); // remember the seed
+        SkMWCRandom rand2(rand); // remember the seed
 
         SkPicture picture;
         SkCanvas* canvas = picture.beginRecording(100, 100);
@@ -292,6 +295,8 @@ static void test_peephole(skiatest::Reporter* reporter) {
             rand_op(canvas, rand);
         }
         picture.endRecording();
+
+        rand = rand2;
     }
 
     {
@@ -356,8 +361,9 @@ private:
 
 #include "SkImageEncoder.h"
 
-static bool PNGEncodeBitmapToStream(SkWStream* wStream, const SkBitmap& bm) {
-    return SkImageEncoder::EncodeStream(wStream, bm, SkImageEncoder::kPNG_Type, 100);
+static SkData* encode_bitmap_to_data(size_t* offset, const SkBitmap& bm) {
+    *offset = 0;
+    return SkImageEncoder::EncodeData(bm, SkImageEncoder::kPNG_Type, 100);
 }
 
 static SkData* serialized_picture_from_bitmap(const SkBitmap& bitmap) {
@@ -365,8 +371,24 @@ static SkData* serialized_picture_from_bitmap(const SkBitmap& bitmap) {
     SkCanvas* canvas = picture.beginRecording(bitmap.width(), bitmap.height());
     canvas->drawBitmap(bitmap, 0, 0);
     SkDynamicMemoryWStream wStream;
-    picture.serialize(&wStream, &PNGEncodeBitmapToStream);
+    picture.serialize(&wStream, &encode_bitmap_to_data);
     return wStream.copyToData();
+}
+
+struct ErrorContext {
+    int fErrors;
+    skiatest::Reporter* fReporter;
+};
+
+static void assert_one_parse_error_cb(SkError error, void* context) {
+    ErrorContext* errorContext = static_cast<ErrorContext*>(context);
+    errorContext->fErrors++;
+    // This test only expects one error, and that is a kParseError. If there are others,
+    // there is some unknown problem.
+    REPORTER_ASSERT_MESSAGE(errorContext->fReporter, 1 == errorContext->fErrors,
+                            "This threw more errors than expected.");
+    REPORTER_ASSERT_MESSAGE(errorContext->fReporter, kParseError_SkError == error,
+                            SkGetLastErrorString());
 }
 
 static void test_bitmap_with_encoded_data(skiatest::Reporter* reporter) {
@@ -393,6 +415,18 @@ static void test_bitmap_with_encoded_data(skiatest::Reporter* reporter) {
     SkAutoDataUnref picture1(serialized_picture_from_bitmap(original));
     SkAutoDataUnref picture2(serialized_picture_from_bitmap(bm));
     REPORTER_ASSERT(reporter, picture1->equals(picture2));
+    // Now test that a parse error was generated when trying to create a new SkPicture without
+    // providing a function to decode the bitmap.
+    ErrorContext context;
+    context.fErrors = 0;
+    context.fReporter = reporter;
+    SkSetErrorCallback(assert_one_parse_error_cb, &context);
+    SkMemoryStream pictureStream(picture1);
+    SkClearLastError();
+    SkAutoUnref pictureFromStream(SkPicture::CreateFromStream(&pictureStream, NULL));
+    REPORTER_ASSERT(reporter, pictureFromStream.get() != NULL);
+    SkClearLastError();
+    SkSetErrorCallback(NULL, NULL);
 }
 
 static void test_clone_empty(skiatest::Reporter* reporter) {
@@ -417,6 +451,105 @@ static void test_clone_empty(skiatest::Reporter* reporter) {
     }
 }
 
+static void test_clip_bound_opt(skiatest::Reporter* reporter) {
+    // Test for crbug.com/229011
+    SkRect rect1 = SkRect::MakeXYWH(SkIntToScalar(4), SkIntToScalar(4),
+                                    SkIntToScalar(2), SkIntToScalar(2));
+    SkRect rect2 = SkRect::MakeXYWH(SkIntToScalar(7), SkIntToScalar(7),
+                                    SkIntToScalar(1), SkIntToScalar(1));
+    SkRect rect3 = SkRect::MakeXYWH(SkIntToScalar(6), SkIntToScalar(6),
+                                    SkIntToScalar(1), SkIntToScalar(1));
+
+    SkPath invPath;
+    invPath.addOval(rect1);
+    invPath.setFillType(SkPath::kInverseEvenOdd_FillType);
+    SkPath path;
+    path.addOval(rect2);
+    SkPath path2;
+    path2.addOval(rect3);
+    SkIRect clipBounds;
+    // Minimalist test set for 100% code coverage of
+    // SkPictureRecord::updateClipConservativelyUsingBounds
+    {
+        SkPicture picture;
+        SkCanvas* canvas = picture.beginRecording(10, 10,
+            SkPicture::kUsePathBoundsForClip_RecordingFlag);
+        canvas->clipPath(invPath, SkRegion::kIntersect_Op);
+        bool nonEmpty = canvas->getClipDeviceBounds(&clipBounds);
+        REPORTER_ASSERT(reporter, true == nonEmpty);
+        REPORTER_ASSERT(reporter, 0 == clipBounds.fLeft);
+        REPORTER_ASSERT(reporter, 0 == clipBounds.fTop);
+        REPORTER_ASSERT(reporter, 10 == clipBounds.fBottom);
+        REPORTER_ASSERT(reporter, 10 == clipBounds.fRight);
+    }
+    {
+        SkPicture picture;
+        SkCanvas* canvas = picture.beginRecording(10, 10,
+            SkPicture::kUsePathBoundsForClip_RecordingFlag);
+        canvas->clipPath(path, SkRegion::kIntersect_Op);
+        canvas->clipPath(invPath, SkRegion::kIntersect_Op);
+        bool nonEmpty = canvas->getClipDeviceBounds(&clipBounds);
+        REPORTER_ASSERT(reporter, true == nonEmpty);
+        REPORTER_ASSERT(reporter, 7 == clipBounds.fLeft);
+        REPORTER_ASSERT(reporter, 7 == clipBounds.fTop);
+        REPORTER_ASSERT(reporter, 8 == clipBounds.fBottom);
+        REPORTER_ASSERT(reporter, 8 == clipBounds.fRight);
+    }
+    {
+        SkPicture picture;
+        SkCanvas* canvas = picture.beginRecording(10, 10,
+            SkPicture::kUsePathBoundsForClip_RecordingFlag);
+        canvas->clipPath(path, SkRegion::kIntersect_Op);
+        canvas->clipPath(invPath, SkRegion::kUnion_Op);
+        bool nonEmpty = canvas->getClipDeviceBounds(&clipBounds);
+        REPORTER_ASSERT(reporter, true == nonEmpty);
+        REPORTER_ASSERT(reporter, 0 == clipBounds.fLeft);
+        REPORTER_ASSERT(reporter, 0 == clipBounds.fTop);
+        REPORTER_ASSERT(reporter, 10 == clipBounds.fBottom);
+        REPORTER_ASSERT(reporter, 10 == clipBounds.fRight);
+    }
+    {
+        SkPicture picture;
+        SkCanvas* canvas = picture.beginRecording(10, 10,
+            SkPicture::kUsePathBoundsForClip_RecordingFlag);
+        canvas->clipPath(path, SkRegion::kDifference_Op);
+        bool nonEmpty = canvas->getClipDeviceBounds(&clipBounds);
+        REPORTER_ASSERT(reporter, true == nonEmpty);
+        REPORTER_ASSERT(reporter, 0 == clipBounds.fLeft);
+        REPORTER_ASSERT(reporter, 0 == clipBounds.fTop);
+        REPORTER_ASSERT(reporter, 10 == clipBounds.fBottom);
+        REPORTER_ASSERT(reporter, 10 == clipBounds.fRight);
+    }
+    {
+        SkPicture picture;
+        SkCanvas* canvas = picture.beginRecording(10, 10,
+            SkPicture::kUsePathBoundsForClip_RecordingFlag);
+        canvas->clipPath(path, SkRegion::kReverseDifference_Op);
+        bool nonEmpty = canvas->getClipDeviceBounds(&clipBounds);
+        // True clip is actually empty in this case, but the best
+        // determination we can make using only bounds as input is that the
+        // clip is included in the bounds of 'path'.
+        REPORTER_ASSERT(reporter, true == nonEmpty);
+        REPORTER_ASSERT(reporter, 7 == clipBounds.fLeft);
+        REPORTER_ASSERT(reporter, 7 == clipBounds.fTop);
+        REPORTER_ASSERT(reporter, 8 == clipBounds.fBottom);
+        REPORTER_ASSERT(reporter, 8 == clipBounds.fRight);
+    }
+    {
+        SkPicture picture;
+        SkCanvas* canvas = picture.beginRecording(10, 10,
+            SkPicture::kUsePathBoundsForClip_RecordingFlag);
+        canvas->clipPath(path, SkRegion::kIntersect_Op);
+        canvas->clipPath(path2, SkRegion::kXOR_Op);
+        bool nonEmpty = canvas->getClipDeviceBounds(&clipBounds);
+        REPORTER_ASSERT(reporter, true == nonEmpty);
+        REPORTER_ASSERT(reporter, 6 == clipBounds.fLeft);
+        REPORTER_ASSERT(reporter, 6 == clipBounds.fTop);
+        REPORTER_ASSERT(reporter, 8 == clipBounds.fBottom);
+        REPORTER_ASSERT(reporter, 8 == clipBounds.fRight);
+    }
+}
+
 static void TestPicture(skiatest::Reporter* reporter) {
 #ifdef SK_DEBUG
     test_deleting_empty_playback();
@@ -424,10 +557,11 @@ static void TestPicture(skiatest::Reporter* reporter) {
 #else
     test_bad_bitmap();
 #endif
-    test_peephole(reporter);
+    test_peephole();
     test_gatherpixelrefs(reporter);
     test_bitmap_with_encoded_data(reporter);
     test_clone_empty(reporter);
+    test_clip_bound_opt(reporter);
 }
 
 #include "TestClassDef.h"

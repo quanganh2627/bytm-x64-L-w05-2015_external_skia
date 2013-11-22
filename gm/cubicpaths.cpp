@@ -9,9 +9,48 @@
 #include "SkPaint.h"
 #include "SkRandom.h"
 
-namespace skiagm {
+// skbug.com/1316 shows that this cubic, when slightly clipped, creates big
+// (incorrect) changes to its control points.
+class ClippedCubicGM : public skiagm::GM {
+public:
+    ClippedCubicGM() {}
 
-class CubicPathGM : public GM {
+protected:
+    SkString onShortName() {
+        return SkString("clippedcubic");
+    }
+
+    SkISize onISize() { return SkISize::Make(1240, 390); }
+
+    virtual void onDraw(SkCanvas* canvas) {
+        SkPath path;
+        path.moveTo(0, 0);
+        path.cubicTo(140, 150, 40, 10, 170, 150);
+
+        SkPaint paint;
+        SkRect bounds = path.getBounds();
+
+        for (SkScalar dy = -1; dy <= 1; dy += 1) {
+            canvas->save();
+            for (SkScalar dx = -1; dx <= 1; dx += 1) {
+                canvas->save();
+                canvas->clipRect(bounds);
+                canvas->translate(dx, dy);
+                canvas->drawPath(path, paint);
+                canvas->restore();
+
+                canvas->translate(bounds.width(), 0);
+            }
+            canvas->restore();
+            canvas->translate(0, bounds.height());
+        }
+    }
+
+private:
+    typedef skiagm::GM INHERITED;
+};
+
+class CubicPathGM : public skiagm::GM {
 public:
     CubicPathGM() {}
 
@@ -20,7 +59,7 @@ protected:
         return SkString("cubicpath");
     }
 
-    SkISize onISize() { return make_isize(1240, 390); }
+    SkISize onISize() { return SkISize::Make(1240, 390); }
 
     void drawPath(SkPath& path,SkCanvas* canvas,SkColor color,
                   const SkRect& clip,SkPaint::Cap cap, SkPaint::Join join,
@@ -151,10 +190,10 @@ protected:
     }
 
 private:
-    typedef GM INHERITED;
+    typedef skiagm::GM INHERITED;
 };
 
-class CubicClosePathGM : public GM {
+class CubicClosePathGM : public skiagm::GM {
 public:
     CubicClosePathGM() {}
 
@@ -163,7 +202,7 @@ protected:
         return SkString("cubicclosepath");
     }
 
-    SkISize onISize() { return make_isize(1240, 390); }
+    SkISize onISize() { return SkISize::Make(1240, 390); }
 
     void drawPath(SkPath& path,SkCanvas* canvas,SkColor color,
                   const SkRect& clip,SkPaint::Cap cap, SkPaint::Join join,
@@ -295,15 +334,11 @@ protected:
     }
 
 private:
-    typedef GM INHERITED;
+    typedef skiagm::GM INHERITED;
 };
 
 //////////////////////////////////////////////////////////////////////////////
 
-static GM* CubicPathFactory(void*) { return new CubicPathGM; }
-static GMRegistry regCubicPath(CubicPathFactory);
-
-static GM* CubicClosePathFactory(void*) { return new CubicClosePathGM; }
-static GMRegistry regCubicClosePath(CubicClosePathFactory);
-
-}
+DEF_GM( return new CubicPathGM; )
+DEF_GM( return new CubicClosePathGM; )
+DEF_GM( return new ClippedCubicGM; )

@@ -7,6 +7,7 @@
 
 #include "SkData.h"
 #include "SkFlattenableBuffers.h"
+#include "SkOSFile.h"
 
 SK_DEFINE_INST_COUNT(SkData)
 
@@ -79,6 +80,41 @@ SkData* SkData::NewWithCopy(const void* data, size_t length) {
 SkData* SkData::NewWithProc(const void* data, size_t length,
                             ReleaseProc proc, void* context) {
     return new SkData(data, length, proc, context);
+}
+
+// assumes fPtr was allocated with sk_fmmap
+static void sk_mmap_releaseproc(const void* addr, size_t length, void*) {
+    sk_fmunmap(addr, length);
+}
+
+SkData* SkData::NewFromFILE(SkFILE* f) {
+    size_t size;
+    void* addr = sk_fmmap(f, &size);
+    if (NULL == addr) {
+        return NULL;
+    }
+
+    return SkData::NewWithProc(addr, size, sk_mmap_releaseproc, NULL);
+}
+
+SkData* SkData::NewFromFileName(const char path[]) {
+    SkFILE* f = path ? sk_fopen(path, kRead_SkFILE_Flag) : NULL;
+    if (NULL == f) {
+        return NULL;
+    }
+    SkData* data = NewFromFILE(f);
+    sk_fclose(f);
+    return data;
+}
+
+SkData* SkData::NewFromFD(int fd) {
+    size_t size;
+    void* addr = sk_fdmmap(fd, &size);
+    if (NULL == addr) {
+        return NULL;
+    }
+
+    return SkData::NewWithProc(addr, size, sk_mmap_releaseproc, NULL);
 }
 
 // assumes context is a SkData

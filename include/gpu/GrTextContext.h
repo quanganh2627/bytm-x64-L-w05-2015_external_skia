@@ -1,12 +1,9 @@
-
 /*
  * Copyright 2010 Google Inc.
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
-
-
 
 #ifndef GrTextContext_DEFINED
 #define GrTextContext_DEFINED
@@ -15,7 +12,6 @@
 #include "GrGlyph.h"
 #include "GrPaint.h"
 
-struct GrGpuTextVertex;
 class GrContext;
 class GrTextStrike;
 class GrFontScaler;
@@ -33,7 +29,6 @@ public:
 
 private:
     GrPaint         fPaint;
-    GrVertexLayout  fVertexLayout;
     GrContext*      fContext;
     GrDrawTarget*   fDrawTarget;
 
@@ -50,13 +45,12 @@ private:
         kDefaultRequestedVerts   = kDefaultRequestedGlyphs * 4,
     };
 
-    GrGpuTextVertex*        fVertices;
-
+    SkPoint*                fVertices;
     int32_t                 fMaxVertices;
     GrTexture*              fCurrTexture;
     int                     fCurrVertex;
 
-    GrIRect                 fClipRect;
+    SkIRect                 fClipRect;
     GrContext::AutoMatrix   fAutoMatrix;
 };
 

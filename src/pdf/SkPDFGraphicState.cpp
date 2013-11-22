@@ -1,11 +1,9 @@
-
 /*
  * Copyright 2011 Google Inc.
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
-
 
 #include "SkPDFFormXObject.h"
 #include "SkPDFGraphicState.h"
@@ -16,7 +14,9 @@
 static const char* blend_mode_from_xfermode(SkXfermode::Mode mode) {
     switch (mode) {
         case SkXfermode::kSrcOver_Mode:    return "Normal";
-        case SkXfermode::kModulate_Mode:   return "Multiply";
+        // kModulate is not really like multipy but similar most of the time.
+        case SkXfermode::kModulate_Mode:
+        case SkXfermode::kMultiply_Mode:   return "Multiply";
         case SkXfermode::kScreen_Mode:     return "Screen";
         case SkXfermode::kOverlay_Mode:    return "Overlay";
         case SkXfermode::kDarken_Mode:     return "Darken";
@@ -27,6 +27,10 @@ static const char* blend_mode_from_xfermode(SkXfermode::Mode mode) {
         case SkXfermode::kSoftLight_Mode:  return "SoftLight";
         case SkXfermode::kDifference_Mode: return "Difference";
         case SkXfermode::kExclusion_Mode:  return "Exclusion";
+        case SkXfermode::kHue_Mode:        return "Hue";
+        case SkXfermode::kSaturation_Mode: return "Saturation";
+        case SkXfermode::kColor_Mode:      return "Color";
+        case SkXfermode::kLuminosity_Mode: return "Luminosity";
 
         // These are handled in SkPDFDevice::setUpContentEntry.
         case SkXfermode::kClear_Mode:
@@ -60,8 +64,10 @@ SkPDFGraphicState::~SkPDFGraphicState() {
     fResources.unrefAll();
 }
 
-void SkPDFGraphicState::getResources(SkTDArray<SkPDFObject*>* resourceList) {
-    GetResourcesHelper(&fResources, resourceList);
+void SkPDFGraphicState::getResources(
+        const SkTSet<SkPDFObject*>& knownResourceObjects,
+        SkTSet<SkPDFObject*>* newResourceObjects) {
+    GetResourcesHelper(&fResources, knownResourceObjects, newResourceObjects);
 }
 
 void SkPDFGraphicState::emitObject(SkWStream* stream, SkPDFCatalog* catalog,
@@ -132,13 +138,17 @@ SkPDFObject* SkPDFGraphicState::GetInvertFunction() {
 
 // static
 SkPDFGraphicState* SkPDFGraphicState::GetSMaskGraphicState(
-        SkPDFFormXObject* sMask, bool invert) {
+        SkPDFFormXObject* sMask, bool invert, SkPDFSMaskMode sMaskMode) {
     // The practical chances of using the same mask more than once are unlikely
     // enough that it's not worth canonicalizing.
     SkAutoMutexAcquire lock(CanonicalPaintsMutex());
 
     SkAutoTUnref<SkPDFDict> sMaskDict(new SkPDFDict("Mask"));
-    sMaskDict->insertName("S", "Alpha");
+    if (sMaskMode == kAlpha_SMaskMode) {
+        sMaskDict->insertName("S", "Alpha");
+    } else if (sMaskMode == kLuminosity_SMaskMode) {
+        sMaskDict->insertName("S", "Luminosity");
+    }
     sMaskDict->insert("G", new SkPDFObjRef(sMask))->unref();
 
     SkPDFGraphicState* result = new SkPDFGraphicState;

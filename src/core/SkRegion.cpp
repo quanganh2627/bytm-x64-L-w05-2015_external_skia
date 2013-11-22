@@ -124,6 +124,15 @@ void SkRegion::swap(SkRegion& other) {
     SkTSwap<RunHead*>(fRunHead, other.fRunHead);
 }
 
+int SkRegion::computeRegionComplexity() const {
+  if (this->isEmpty()) {
+    return 0;
+  } else if (this->isRect()) {
+    return 1;
+  }
+  return fRunHead->getIntervalCount();
+}
+
 bool SkRegion::setEmpty() {
     this->freeRuns();
     fBounds.set(0, 0, 0, 0);
@@ -1173,7 +1182,7 @@ static const SkRegion::RunType* skip_intervals_slow(const SkRegion::RunType runs
     return runs;
 }
 
-static void compute_bounds(const SkRegion::RunType runs[], int count,
+static void compute_bounds(const SkRegion::RunType runs[],
                            SkIRect* bounds, int* ySpanCountPtr,
                            int* intervalCountPtr) {
     assert_sentinel(runs[0], false);    // top
@@ -1233,13 +1242,12 @@ void SkRegion::validate() const {
             SkASSERT(fRunHead->fRunCount > kRectRegionRuns);
 
             const RunType* run = fRunHead->readonly_runs();
-            const RunType* stop = run + fRunHead->fRunCount;
 
             // check that our bounds match our runs
             {
                 SkIRect bounds;
                 int ySpanCount, intervalCount;
-                compute_bounds(run, stop - run, &bounds, &ySpanCount, &intervalCount);
+                compute_bounds(run, &bounds, &ySpanCount, &intervalCount);
 
                 SkASSERT(bounds == fBounds);
                 SkASSERT(ySpanCount > 0);

@@ -67,47 +67,9 @@
         return prod == prod;
     }
 
-#if defined(SK_DEBUG) && !defined(SK_BUILD_FOR_ANDROID)
-    /** SkIntToScalar(n) returns its integer argument as an SkScalar
-     *
-     * If we're compiling in DEBUG mode, and can thus afford some extra runtime
-     * cycles, check to make sure that the parameter passed in has not already
-     * been converted to SkScalar.  (A double conversion like this is harmless
-     * for SK_SCALAR_IS_FLOAT, but for SK_SCALAR_IS_FIXED this causes trouble.)
-     *
-     * Note that we need all of these method signatures to properly handle the
-     * various types that we pass into SkIntToScalar() to date:
-     * int, size_t, U8CPU, etc., even though what we really mean is "anything
-     * but a float".
-     */
-    static inline float SkIntToScalar(signed int param) {
-        return (float)param;
-    }
-    static inline float SkIntToScalar(unsigned int param) {
-        return (float)param;
-    }
-    static inline float SkIntToScalar(signed long param) {
-        return (float)param;
-    }
-    static inline float SkIntToScalar(unsigned long param) {
-        return (float)param;
-    }
-    static inline float SkIntToScalar(float /* param */) {
-        /* If the parameter passed into SkIntToScalar is a float,
-         * one of two things has happened:
-         * 1. the parameter was an SkScalar (which is typedef'd to float)
-         * 2. the parameter was a float instead of an int
-         *
-         * Either way, it's not good.
-         */
-        SkDEBUGFAIL("looks like you passed an SkScalar into SkIntToScalar");
-        return (float)0;
-    }
-#else  // not SK_DEBUG
     /** SkIntToScalar(n) returns its integer argument as an SkScalar
     */
     #define SkIntToScalar(n)        ((float)(n))
-#endif // not SK_DEBUG
     /** SkFixedToScalar(n) returns its SkFixed argument as an SkScalar
     */
     #define SkFixedToScalar(x)      SkFixedToFloat(x)
@@ -132,6 +94,7 @@
     #define SkScalarFloorToInt(x)       sk_float_floor2int(x)
     #define SkScalarCeilToInt(x)        sk_float_ceil2int(x)
     #define SkScalarRoundToInt(x)       sk_float_round2int(x)
+    #define SkScalarTruncToInt(x)       static_cast<int>(x)
 
     /** Returns the absolute value of the specified SkScalar
     */
@@ -248,6 +211,7 @@
     #define SkScalarFloorToInt(x)       SkFixedFloorToInt(x)
     #define SkScalarCeilToInt(x)        SkFixedCeilToInt(x)
     #define SkScalarRoundToInt(x)       SkFixedRoundToInt(x)
+    #define SkScalarTruncToInt(x)       (((x) < 0) ? SkScalarCeilToInt(x) : SkScalarFloorToInt(x))
 
     #define SkScalarAbs(x)          SkFixedAbs(x)
     #define SkScalarCopySign(x, y)  SkCopySign32(x, y)

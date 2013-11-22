@@ -10,21 +10,20 @@
 #ifndef SkDraw_DEFINED
 #define SkDraw_DEFINED
 
-#include "SkBitmap.h"
 #include "SkCanvas.h"
 #include "SkMask.h"
-#include "SkMatrix.h"
 #include "SkPaint.h"
-#include "SkRect.h"
-#include "SkAutoKern.h"
 
+class SkBitmap;
 class SkBounder;
 class SkClipStack;
 class SkDevice;
+class SkMatrix;
 class SkPath;
 class SkRegion;
 class SkRasterClip;
 struct SkDrawProcs;
+struct SkRect;
 
 class SkDraw {
 public:
@@ -104,6 +103,10 @@ private:
     void    drawDevMask(const SkMask& mask, const SkPaint&) const;
     void    drawBitmapAsMask(const SkBitmap&, const SkPaint&) const;
 
+    void    drawPosText_asPaths(const char text[], size_t byteLength,
+                                const SkScalar pos[], SkScalar constY,
+                                int scalarsPerPosition, const SkPaint&) const;
+
     /**
      *  Return the current clip bounds, in local coordinates, with slop to account
      *  for antialiasing or hairlines (i.e. device-bounds outset by 1, and then
@@ -114,6 +117,8 @@ private:
      */
     bool SK_WARN_UNUSED_RESULT
     computeConservativeLocalClipBounds(SkRect* bounds) const;
+
+    static bool ShouldDrawTextAsPaths(const SkPaint&, const SkMatrix&);
 
 public:
     const SkBitmap* fBitmap;        // required

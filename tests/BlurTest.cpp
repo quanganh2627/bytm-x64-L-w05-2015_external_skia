@@ -10,7 +10,6 @@
 #include "SkCanvas.h"
 #include "SkMath.h"
 #include "SkPaint.h"
-#include "SkRandom.h"
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -105,18 +104,6 @@ static void test_blur(skiatest::Reporter* reporter) {
         for (uint32_t flags = 0; flags < flagPermutations; ++flags) {
             SkMaskFilter* filter;
             filter = SkBlurMaskFilter::Create(radius, blurStyle, flags);
-
-            SkMaskFilter::BlurInfo info;
-            sk_bzero(&info, sizeof(info));
-            SkMaskFilter::BlurType type = filter->asABlur(&info);
-
-            REPORTER_ASSERT(reporter, type ==
-                static_cast<SkMaskFilter::BlurType>(style + 1));
-            REPORTER_ASSERT(reporter, info.fRadius == radius);
-            REPORTER_ASSERT(reporter, info.fIgnoreTransform ==
-                SkToBool(flags & SkBlurMaskFilter::kIgnoreTransform_BlurFlag));
-            REPORTER_ASSERT(reporter, info.fHighQuality ==
-                SkToBool(flags & SkBlurMaskFilter::kHighQuality_BlurFlag));
 
             paint.setMaskFilter(filter);
             filter->unref();

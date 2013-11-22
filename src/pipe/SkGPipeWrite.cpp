@@ -6,6 +6,7 @@
  * found in the LICENSE file.
  */
 
+#include "SkAnnotation.h"
 #include "SkBitmapHeap.h"
 #include "SkCanvas.h"
 #include "SkColorFilter.h"
@@ -47,6 +48,7 @@ static SkFlattenable* get_paintflat(const SkPaint& paint, unsigned paintFlat) {
         case kShader_PaintFlat:         return paint.getShader();
         case kImageFilter_PaintFlat:    return paint.getImageFilter();
         case kXfermode_PaintFlat:       return paint.getXfermode();
+        case kAnnotation_PaintFlat:     return paint.getAnnotation();
     }
     SkDEBUGFAIL("never gets here");
     return NULL;
@@ -253,6 +255,9 @@ public:
                           const uint16_t indices[], int indexCount,
                               const SkPaint&) SK_OVERRIDE;
     virtual void drawData(const void*, size_t) SK_OVERRIDE;
+    virtual void beginCommentGroup(const char* description) SK_OVERRIDE;
+    virtual void addComment(const char* kywd, const char* value) SK_OVERRIDE;
+    virtual void endCommentGroup() SK_OVERRIDE;
 
     /**
      * Flatten an SkBitmap to send to the reader, where it will be referenced
@@ -341,7 +346,7 @@ bool SkGPipeCanvas::shuttleBitmap(const SkBitmap& bm, int32_t slot) {
     SkASSERT(shouldFlattenBitmaps(fFlags));
     SkOrderedWriteBuffer buffer(1024);
     buffer.setNamedFactoryRecorder(fFactorySet);
-    bm.flatten(buffer);
+    buffer.writeBitmap(bm);
     this->flattenFactoryNames();
     uint32_t size = buffer.size();
     if (this->needOpBytes(size)) {
@@ -966,6 +971,18 @@ void SkGPipeCanvas::drawData(const void* ptr, size_t size) {
             fWriter.writePad(ptr, size);
         }
     }
+}
+
+void SkGPipeCanvas::beginCommentGroup(const char* description) {
+    // ignore for now
+}
+
+void SkGPipeCanvas::addComment(const char* kywd, const char* value) {
+    // ignore for now
+}
+
+void SkGPipeCanvas::endCommentGroup() {
+    // ignore for now
 }
 
 void SkGPipeCanvas::flushRecording(bool detachCurrentBlock) {

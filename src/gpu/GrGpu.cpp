@@ -11,6 +11,7 @@
 
 #include "GrBufferAllocPool.h"
 #include "GrContext.h"
+#include "GrDrawTargetCaps.h"
 #include "GrIndexBuffer.h"
 #include "GrStencilBuffer.h"
 #include "GrVertexBuffer.h"
@@ -26,16 +27,15 @@ static const int INDEX_POOL_IB_COUNT = 4;
 #define DEBUG_INVAL_BUFFER    0xdeadcafe
 #define DEBUG_INVAL_START_IDX -1
 
-GrGpu::GrGpu()
-    : fContext(NULL)
+GrGpu::GrGpu(GrContext* context)
+    : GrDrawTarget(context)
     , fResetTimestamp(kExpiredTimestamp+1)
+    , fResetBits(kAll_GrBackendState)
     , fVertexPool(NULL)
     , fIndexPool(NULL)
     , fVertexPoolUseCnt(0)
     , fIndexPoolUseCnt(0)
-    , fUnitSquareVertexBuffer(NULL)
-    , fQuadIndexBuffer(NULL)
-    , fContextIsDirty(true) {
+    , fQuadIndexBuffer(NULL) {
 
     fClipMaskManager.setGpu(this);
 
@@ -48,7 +48,7 @@ GrGpu::GrGpu()
     poolState.fPoolStartIndex = DEBUG_INVAL_START_IDX;
 #endif
 
-    for (int i = 0; i < kGrPixelConfigCount; ++i) {
+    for (int i = 0; i < kGrPixelConfigCnt; ++i) {
         fConfigRenderSupport[i] = false;
     };
 }
@@ -66,10 +66,7 @@ void GrGpu::abandonResources() {
     }
 
     GrAssert(NULL == fQuadIndexBuffer || !fQuadIndexBuffer->isValid());
-    GrAssert(NULL == fUnitSquareVertexBuffer ||
-             !fUnitSquareVertexBuffer->isValid());
     GrSafeSetNull(fQuadIndexBuffer);
-    GrSafeSetNull(fUnitSquareVertexBuffer);
     delete fVertexPool;
     fVertexPool = NULL;
     delete fIndexPool;
@@ -85,10 +82,7 @@ void GrGpu::releaseResources() {
     }
 
     GrAssert(NULL == fQuadIndexBuffer || !fQuadIndexBuffer->isValid());
-    GrAssert(NULL == fUnitSquareVertexBuffer ||
-             !fUnitSquareVertexBuffer->isValid());
     GrSafeSetNull(fQuadIndexBuffer);
-    GrSafeSetNull(fUnitSquareVertexBuffer);
     delete fVertexPool;
     fVertexPool = NULL;
     delete fIndexPool;
@@ -204,12 +198,12 @@ GrIndexBuffer* GrGpu::createIndexBuffer(uint32_t size, bool dynamic) {
 }
 
 GrPath* GrGpu::createPath(const SkPath& path) {
-    GrAssert(fCaps.pathStencilingSupport());
+    GrAssert(this->caps()->pathStencilingSupport());
     this->handleDirtyContext();
     return this->onCreatePath(path);
 }
 
-void GrGpu::clear(const GrIRect* rect,
+void GrGpu::clear(const SkIRect* rect,
                   GrColor color,
                   GrRenderTarget* renderTarget) {
     GrDrawState::AutoRenderTargetRestore art;
@@ -217,6 +211,7 @@ void GrGpu::clear(const GrIRect* rect,
         art.set(this->drawState(), renderTarget);
     }
     if (NULL == this->getDrawState().getRenderTarget()) {
+        GrAssert(0);
         return;
     }
     this->handleDirtyContext();
@@ -231,19 +226,19 @@ void GrGpu::forceRenderTargetFlush() {
 bool GrGpu::readPixels(GrRenderTarget* target,
                        int left, int top, int width, int height,
                        GrPixelConfig config, void* buffer,
-                       size_t rowBytes, bool invertY) {
+                       size_t rowBytes) {
     this->handleDirtyContext();
     return this->onReadPixels(target, left, top, width, height,
-                              config, buffer, rowBytes, invertY);
+                              config, buffer, rowBytes);
 }
 
-void GrGpu::writeTexturePixels(GrTexture* texture,
+bool GrGpu::writeTexturePixels(GrTexture* texture,
                                int left, int top, int width, int height,
                                GrPixelConfig config, const void* buffer,
                                size_t rowBytes) {
     this->handleDirtyContext();
-    this->onWriteTexturePixels(texture, left, top, width, height,
-                               config, buffer, rowBytes);
+    return this->onWriteTexturePixels(texture, left, top, width, height,
+                                      config, buffer, rowBytes);
 }
 
 void GrGpu::resolveRenderTarget(GrRenderTarget* target) {
@@ -296,46 +291,15 @@ const GrIndexBuffer* GrGpu::getQuadIndexBuffer() const {
     return fQuadIndexBuffer;
 }
 
-const GrVertexBuffer* GrGpu::getUnitSquareVertexBuffer() const {
-    if (NULL == fUnitSquareVertexBuffer) {
-
-        static const GrPoint DATA[] = {
-            { 0,            0 },
-            { SK_Scalar1,   0 },
-            { SK_Scalar1,   SK_Scalar1 },
-            { 0,            SK_Scalar1 }
-#if 0
-            GrPoint(0,         0),
-            GrPoint(SK_Scalar1,0),
-            GrPoint(SK_Scalar1,SK_Scalar1),
-            GrPoint(0,         SK_Scalar1)
-#endif
-        };
-        static const size_t SIZE = sizeof(DATA);
-
-        GrGpu* me = const_cast<GrGpu*>(this);
-        fUnitSquareVertexBuffer = me->createVertexBuffer(SIZE, false);
-        if (NULL != fUnitSquareVertexBuffer) {
-            if (!fUnitSquareVertexBuffer->updateData(DATA, SIZE)) {
-                fUnitSquareVertexBuffer->unref();
-                fUnitSquareVertexBuffer = NULL;
-                GrCrash("Can't get vertices into buffer!");
-            }
-        }
-    }
-
-    return fUnitSquareVertexBuffer;
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 
-bool GrGpu::setupClipAndFlushState(DrawType type) {
-
-    if (!fClipMaskManager.setupClipping(this->getClip())) {
+bool GrGpu::setupClipAndFlushState(DrawType type, const GrDeviceCoordTexture* dstCopy,
+                                   GrDrawState::AutoRestoreEffects* are) {
+    if (!fClipMaskManager.setupClipping(this->getClip(), are)) {
         return false;
     }
 
-    if (!this->flushGraphicsState(type)) {
+    if (!this->flushGraphicsState(type, dstCopy)) {
         return false;
     }
 
@@ -373,7 +337,10 @@ void GrGpu::geometrySourceWillPop(const GeometrySrcState& restoredState) {
 
 void GrGpu::onDraw(const DrawInfo& info) {
     this->handleDirtyContext();
-    if (!this->setupClipAndFlushState(PrimTypeToDrawType(info.primitiveType()))) {
+    GrDrawState::AutoRestoreEffects are;
+    if (!this->setupClipAndFlushState(PrimTypeToDrawType(info.primitiveType()),
+                                      info.getDstCopy(),
+                                      &are)) {
         return;
     }
     this->onGpuDraw(info);
@@ -386,7 +353,8 @@ void GrGpu::onStencilPath(const GrPath* path, const SkStrokeRec&, SkPath::FillTy
     GrAutoTRestore<GrStencilSettings> asr(this->drawState()->stencil());
 
     this->setStencilPathSettings(*path, fill, this->drawState()->stencil());
-    if (!this->setupClipAndFlushState(kStencilPath_DrawType)) {
+    GrDrawState::AutoRestoreEffects are;
+    if (!this->setupClipAndFlushState(kStencilPath_DrawType, NULL, &are)) {
         return;
     }
 
@@ -471,7 +439,7 @@ bool GrGpu::onReserveIndexSpace(int indexCount, void** indices) {
 void GrGpu::releaseReservedVertexSpace() {
     const GeometrySrcState& geoSrc = this->getGeomSrc();
     GrAssert(kReserved_GeometrySrcType == geoSrc.fVertexSrc);
-    size_t bytes = geoSrc.fVertexCount * GrDrawState::VertexSize(geoSrc.fVertexLayout);
+    size_t bytes = geoSrc.fVertexCount * geoSrc.fVertexSize;
     fVertexPool->putBack(bytes);
     --fVertexPoolUseCnt;
 }
@@ -490,7 +458,7 @@ void GrGpu::onSetVertexSourceToArray(const void* vertexArray, int vertexCount) {
 #if GR_DEBUG
     bool success =
 #endif
-    fVertexPool->appendVertices(GrDrawState::VertexSize(this->getVertexLayout()),
+    fVertexPool->appendVertices(this->getVertexSize(),
                                 vertexCount,
                                 vertexArray,
                                 &geomPoolState.fPoolVertexBuffer,
@@ -517,7 +485,7 @@ void GrGpu::releaseVertexArray() {
     // if vertex source was array, we stowed data in the pool
     const GeometrySrcState& geoSrc = this->getGeomSrc();
     GrAssert(kArray_GeometrySrcType == geoSrc.fVertexSrc);
-    size_t bytes = geoSrc.fVertexCount * GrDrawState::VertexSize(geoSrc.fVertexLayout);
+    size_t bytes = geoSrc.fVertexCount * geoSrc.fVertexSize;
     fVertexPool->putBack(bytes);
     --fVertexPoolUseCnt;
 }

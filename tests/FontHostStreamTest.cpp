@@ -72,7 +72,9 @@ static void test_fontHostStream(skiatest::Reporter* reporter) {
         paint.setColor(SK_ColorGRAY);
         paint.setTextSize(SkIntToScalar(30));
 
-        paint.setTypeface(SkTypeface::CreateFromName("Georgia", SkTypeface::kNormal))->unref();
+        SkTypeface* fTypeface = SkTypeface::CreateFromName("Georgia",
+                                                           SkTypeface::kNormal);
+        SkSafeUnref(paint.setTypeface(fTypeface));
 
         SkIRect origRect = SkIRect::MakeWH(64, 64);
         SkBitmap origBitmap;
@@ -91,8 +93,13 @@ static void test_fontHostStream(skiatest::Reporter* reporter) {
         origCanvas.drawText("A", 1, point.fX, point.fY, paint);
 
         SkTypeface* origTypeface = paint.getTypeface();
-        const SkFontID typefaceID = SkTypeface::UniqueID(origTypeface);
-        SkStream* fontData = SkFontHost::OpenStream(typefaceID);
+        SkAutoTUnref<SkTypeface> aur;
+        if (NULL == origTypeface) {
+            origTypeface = aur.reset(SkTypeface::RefDefault());
+        }
+
+        int ttcIndex;
+        SkStream* fontData = origTypeface->openStream(&ttcIndex);
         SkTypeface* streamTypeface = SkTypeface::CreateFromStream(fontData);
         SkSafeUnref(paint.setTypeface(streamTypeface));
         drawBG(&streamCanvas);

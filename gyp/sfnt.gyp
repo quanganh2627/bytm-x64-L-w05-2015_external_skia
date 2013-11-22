@@ -6,7 +6,7 @@
       'type': 'static_library',
       'standalone_static_library': 1,
       'dependencies': [
-        'core.gyp:core',
+        'core.gyp:*',
       ],
       'include_dirs': [
         '../src/sfnt',
@@ -34,8 +34,10 @@
         '../src/sfnt/SkOTUtils.h',
         '../src/sfnt/SkPreprocessorSeq.h',
         '../src/sfnt/SkSFNTHeader.h',
+        '../src/sfnt/SkTTCFHeader.h',
         '../src/sfnt/SkTypedEnum.h',
 
+        '../src/sfnt/SkOTTable_name.cpp',
         '../src/sfnt/SkOTUtils.cpp',
       ],
       'direct_dependent_settings': {

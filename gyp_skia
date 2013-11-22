@@ -62,12 +62,10 @@ def get_output_dir():
   if not output_dir:
     return os.path.join(os.path.abspath(script_dir), 'out')
 
-  if (os.name != 'posix' or
-     (sys.platform.startswith('darwin') and 
+  if (sys.platform.startswith('darwin') and 
       (not os.getenv('GYP_GENERATORS') or 
-       'make' not in os.getenv('GYP_GENERATORS')))):
-    print 'ERROR: variable SKIA_OUT is not valid on Mac (using xcodebuild)' \
-          ' or Windows'
+       'make' not in os.getenv('GYP_GENERATORS'))):
+    print 'ERROR: variable SKIA_OUT is not valid on Mac (using xcodebuild)'
     sys.exit(-1);
 
   if os.path.isabs(output_dir):
@@ -112,13 +110,6 @@ if __name__ == '__main__':
 
   # By default, we build 'most' instead of 'all' or 'everything'. See skia.gyp.
   args.extend(['-Gdefault_target=most'])
-
-  # Special arguments for generating Visual Studio projects:
-  # - msvs_version forces generation of Visual Studio 2010 project so that we
-  #   can use msbuild.exe
-  # - msvs_abspath_output is a workaround for
-  #   http://code.google.com/p/gyp/issues/detail?id=201
-  args.extend(['-Gmsvs_version=2010'])
 
   print 'Updating projects from gyp files...'
   sys.stdout.flush()

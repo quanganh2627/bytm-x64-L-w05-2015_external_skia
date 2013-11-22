@@ -26,6 +26,12 @@ struct SK_API SkIRect {
         return r;
     }
 
+    static SkIRect SK_WARN_UNUSED_RESULT MakeLargest() {
+        SkIRect r;
+        r.setLargest();
+        return r;
+    }
+
     static SkIRect SK_WARN_UNUSED_RESULT MakeWH(int32_t w, int32_t h) {
         SkIRect r;
         r.set(0, 0, w, h);
@@ -93,6 +99,11 @@ struct SK_API SkIRect {
      *  Return true if the rectangle's width or height are <= 0
      */
     bool isEmpty() const { return fLeft >= fRight || fTop >= fBottom; }
+
+    bool isLargest() const { return SK_MinS32 == fLeft &&
+                                    SK_MinS32 == fTop &&
+                                    SK_MaxS32 == fRight &&
+                                    SK_MaxS32 == fBottom; }
 
     friend bool operator==(const SkIRect& a, const SkIRect& b) {
         return !memcmp(&a, &b, sizeof(a));
@@ -769,6 +780,11 @@ struct SK_API SkRect {
      *  other. When this returns, left <= right && top <= bottom
      */
     void sort();
+
+    /**
+     *  cast-safe way to treat the rect as an array of (4) SkScalars.
+     */
+    const SkScalar* asScalars() const { return &fLeft; }
 };
 
 #endif

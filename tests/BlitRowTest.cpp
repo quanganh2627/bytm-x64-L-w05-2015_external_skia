@@ -59,7 +59,7 @@ static int proc_8(const void* ptr, int w, uint32_t expected, uint32_t* bad) {
     return -1;
 }
 
-static int proc_bad(const void* ptr, int, uint32_t, uint32_t* bad) {
+static int proc_bad(const void*, int, uint32_t, uint32_t* bad) {
     *bad = 0;
     return 0;
 }
@@ -166,7 +166,6 @@ static void test_00_FF(skiatest::Reporter* reporter) {
 
 struct Mesh {
     SkPoint     fPts[4];
-    uint16_t    fIndices[6];
 
     Mesh(const SkBitmap& bm, SkPaint* paint) {
         const SkScalar w = SkIntToScalar(bm.width());

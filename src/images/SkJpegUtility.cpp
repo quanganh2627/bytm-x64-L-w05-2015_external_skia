@@ -1,4 +1,3 @@
-
 /*
  * Copyright 2010 The Android Open Source Project
  *
@@ -14,25 +13,37 @@ static void sk_init_source(j_decompress_ptr cinfo) {
     skjpeg_source_mgr*  src = (skjpeg_source_mgr*)cinfo->src;
     src->next_input_byte = (const JOCTET*)src->fBuffer;
     src->bytes_in_buffer = 0;
+#ifdef SK_BUILD_FOR_ANDROID
     src->current_offset = 0;
-    src->fStream->rewind();
+#endif
+    if (!src->fStream->rewind()) {
+        SkDebugf("xxxxxxxxxxxxxx failure to rewind\n");
+        cinfo->err->error_exit((j_common_ptr)cinfo);
+    }
 }
 
+#ifdef SK_BUILD_FOR_ANDROID
 static boolean sk_seek_input_data(j_decompress_ptr cinfo, long byte_offset) {
     skjpeg_source_mgr* src = (skjpeg_source_mgr*)cinfo->src;
+    size_t bo = (size_t) byte_offset;
 
-    if (byte_offset > src->current_offset) {
-        (void)src->fStream->skip(byte_offset - src->current_offset);
+    if (bo > src->current_offset) {
+        (void)src->fStream->skip(bo - src->current_offset);
     } else {
-        src->fStream->rewind();
-        (void)src->fStream->skip(byte_offset);
+        if (!src->fStream->rewind()) {
+            SkDebugf("xxxxxxxxxxxxxx failure to rewind\n");
+            cinfo->err->error_exit((j_common_ptr)cinfo);
+            return false;
+        }
+        (void)src->fStream->skip(bo);
     }
 
-    src->current_offset = byte_offset;
+    src->current_offset = bo;
     src->next_input_byte = (const JOCTET*)src->fBuffer;
     src->bytes_in_buffer = 0;
-    return TRUE;
+    return true;
 }
+#endif
 
 static boolean sk_fill_input_buffer(j_decompress_ptr cinfo) {
     skjpeg_source_mgr* src = (skjpeg_source_mgr*)cinfo->src;
@@ -46,7 +57,9 @@ static boolean sk_fill_input_buffer(j_decompress_ptr cinfo) {
         return FALSE;
     }
 
+#ifdef SK_BUILD_FOR_ANDROID
     src->current_offset += bytes;
+#endif
     src->next_input_byte = (const JOCTET*)src->fBuffer;
     src->bytes_in_buffer = bytes;
     return TRUE;
@@ -64,7 +77,9 @@ static void sk_skip_input_data(j_decompress_ptr cinfo, long num_bytes) {
                 cinfo->err->error_exit((j_common_ptr)cinfo);
                 return;
             }
+#ifdef SK_BUILD_FOR_ANDROID
             src->current_offset += bytes;
+#endif
             bytesToSkip -= bytes;
         }
         src->next_input_byte = (const JOCTET*)src->fBuffer;
@@ -75,82 +90,28 @@ static void sk_skip_input_data(j_decompress_ptr cinfo, long num_bytes) {
     }
 }
 
-static boolean sk_resync_to_restart(j_decompress_ptr cinfo, int desired) {
-    skjpeg_source_mgr*  src = (skjpeg_source_mgr*)cinfo->src;
-
-    // what is the desired param for???
-
-    if (!src->fStream->rewind()) {
-        SkDebugf("xxxxxxxxxxxxxx failure to rewind\n");
-        cinfo->err->error_exit((j_common_ptr)cinfo);
-        return FALSE;
-    }
-    src->next_input_byte = (const JOCTET*)src->fBuffer;
-    src->bytes_in_buffer = 0;
-    return TRUE;
-}
-
 static void sk_term_source(j_decompress_ptr /*cinfo*/) {}
-
-
-#if 0 // UNUSED
-static void skmem_init_source(j_decompress_ptr cinfo) {
-    skjpeg_source_mgr*  src = (skjpeg_source_mgr*)cinfo->src;
-    src->next_input_byte = (const JOCTET*)src->fMemoryBase;
-    src->start_input_byte = (const JOCTET*)src->fMemoryBase;
-    src->bytes_in_buffer = src->fMemoryBaseSize;
-    src->current_offset = src->fMemoryBaseSize;
-}
-
-static boolean skmem_fill_input_buffer(j_decompress_ptr cinfo) {
-    SkDebugf("xxxxxxxxxxxxxx skmem_fill_input_buffer called\n");
-    return FALSE;
-}
-
-static void skmem_skip_input_data(j_decompress_ptr cinfo, long num_bytes) {
-    skjpeg_source_mgr*  src = (skjpeg_source_mgr*)cinfo->src;
-//    SkDebugf("xxxxxxxxxxxxxx skmem_skip_input_data called %d\n", num_bytes);
-    src->next_input_byte = (const JOCTET*)((const char*)src->next_input_byte + num_bytes);
-    src->bytes_in_buffer -= num_bytes;
-}
-
-static boolean skmem_resync_to_restart(j_decompress_ptr cinfo, int desired) {
-    SkDebugf("xxxxxxxxxxxxxx skmem_resync_to_restart called\n");
-    return TRUE;
-}
-
-static void skmem_term_source(j_decompress_ptr /*cinfo*/) {}
-#endif
 
 
 ///////////////////////////////////////////////////////////////////////////////
 
-skjpeg_source_mgr::skjpeg_source_mgr(SkStream* stream, SkImageDecoder* decoder,
-                                     bool ownStream) : fStream(stream) {
-    fDecoder = decoder;
-    const void* baseAddr = stream->getMemoryBase();
-    size_t bufferSize = 4096;
-    size_t len;
-    fMemoryBase = NULL;
-    fUnrefStream = ownStream;
-    fMemoryBaseSize = 0;
+skjpeg_source_mgr::skjpeg_source_mgr(SkStream* stream, SkImageDecoder* decoder)
+    : fStream(SkRef(stream))
+    , fDecoder(decoder) {
 
     init_source = sk_init_source;
     fill_input_buffer = sk_fill_input_buffer;
     skip_input_data = sk_skip_input_data;
-    resync_to_restart = sk_resync_to_restart;
+    resync_to_restart = jpeg_resync_to_restart;
     term_source = sk_term_source;
+#ifdef SK_BUILD_FOR_ANDROID
     seek_input_data = sk_seek_input_data;
+#endif
 //    SkDebugf("**************** use memorybase %p %d\n", fMemoryBase, fMemoryBaseSize);
 }
 
 skjpeg_source_mgr::~skjpeg_source_mgr() {
-    if (fMemoryBase) {
-        sk_free(fMemoryBase);
-    }
-    if (fUnrefStream) {
-        fStream->unref();
-    }
+    SkSafeUnref(fStream);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -165,9 +126,7 @@ static void sk_init_destination(j_compress_ptr cinfo) {
 static boolean sk_empty_output_buffer(j_compress_ptr cinfo) {
     skjpeg_destination_mgr* dest = (skjpeg_destination_mgr*)cinfo->dest;
 
-//  if (!dest->fStream->write(dest->fBuffer, skjpeg_destination_mgr::kBufferSize - dest->free_in_buffer))
-    if (!dest->fStream->write(dest->fBuffer,
-            skjpeg_destination_mgr::kBufferSize)) {
+    if (!dest->fStream->write(dest->fBuffer, skjpeg_destination_mgr::kBufferSize - dest->free_in_buffer)){
         ERREXIT(cinfo, JERR_FILE_WRITE);
         return false;
     }

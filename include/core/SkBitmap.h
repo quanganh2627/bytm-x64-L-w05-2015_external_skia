@@ -23,8 +23,7 @@ class SkPixelRef;
 class SkRegion;
 class SkString;
 
-// This is an opaque class, not interpreted by skia
-class SkGpuTexture;
+class GrTexture;
 
 /** \class SkBitmap
 
@@ -53,14 +52,12 @@ public:
         kRGB_565_Config,    //!< 16-bits per pixel, (see SkColorPriv.h for packing)
         kARGB_4444_Config,  //!< 16-bits per pixel, (see SkColorPriv.h for packing)
         kARGB_8888_Config,  //!< 32-bits per pixel, (see SkColorPriv.h for packing)
-        /**
-         *  Custom compressed format, not supported on all platforms.
-         *  Cannot be used as a destination (target of a canvas).
-         *  i.e. you may be able to draw from one, but you cannot draw into one.
-         */
-        kRLE_Index8_Config,
+    };
 
-        kConfigCount
+    // do not add this to the Config enum, otherwise the compiler will let us
+    // pass this as a valid parameter for Config.
+    enum {
+        kConfigCount = kARGB_8888_Config + 1
     };
 
     /**
@@ -112,7 +109,7 @@ public:
     int height() const { return fHeight; }
     /** Return the number of bytes between subsequent rows of the bitmap.
     */
-    int rowBytes() const { return fRowBytes; }
+    size_t rowBytes() const { return fRowBytes; }
 
     /** Return the shift amount per pixel (i.e. 0 for 1-byte per pixel, 1 for
         2-bytes per pixel configs, 2 for 4-bytes per pixel configs). Return 0
@@ -206,7 +203,7 @@ public:
     /** Given a config and a width, this computes the optimal rowBytes value. This is called automatically
         if you pass 0 for rowBytes to setConfig().
     */
-    static int ComputeRowBytes(Config c, int width);
+    static size_t ComputeRowBytes(Config c, int width);
 
     /** Return the bytes-per-pixel for the specified config. If the config is
         not at least 1-byte per pixel, return 0, including for kNo_Config.
@@ -251,7 +248,7 @@ public:
         ComputeRowBytes() is called to compute the optimal value. This resets
         any pixel/colortable ownership, just like reset().
     */
-    void setConfig(Config, int width, int height, int rowBytes = 0);
+    void setConfig(Config, int width, int height, size_t rowBytes = 0);
     /** Use this to assign a new pixel address for an existing bitmap. This
         will automatically release any pixelref previously installed. Only call
         this if you are handling ownership/lifetime of the pixel memory.
@@ -278,13 +275,12 @@ public:
         @param dst      Location of destination buffer.
         @param dstSize  Size of destination buffer. Must be large enough to hold
                         pixels using indicated stride.
-        @param dstRowBytes  Width of each line in the buffer. If -1, uses
+        @param dstRowBytes  Width of each line in the buffer. If 0, uses
                             bitmap's internal stride.
         @param preserveDstPad Must we preserve padding in the dst
     */
-    bool copyPixelsTo(void* const dst, size_t dstSize, int dstRowBytes = -1,
-                      bool preserveDstPad = false)
-         const;
+    bool copyPixelsTo(void* const dst, size_t dstSize, size_t dstRowBytes = 0,
+                      bool preserveDstPad = false) const;
 
     /** Use the standard HeapAllocator to create the pixelref that manages the
         pixel memory. It will be sized based on the current width/height/config.
@@ -363,16 +359,16 @@ public:
     */
     bool readyToDraw() const {
         return this->getPixels() != NULL &&
-               ((this->config() != kIndex8_Config &&
-                 this->config() != kRLE_Index8_Config) ||
-                       fColorTable != NULL);
+               (this->config() != kIndex8_Config || NULL != fColorTable);
     }
 
     /** Returns the pixelRef's texture, or NULL
      */
-    SkGpuTexture* getTexture() const;
+    GrTexture* getTexture() const;
 
-    /** Return the bitmap's colortable (if any). Does not affect the colortable's
+    /** Return the bitmap's colortable, if it uses one (i.e. fConfig is
+        kIndex8_Config) and the pixels are locked.
+        Otherwise returns NULL. Does not affect the colortable's
         reference count.
     */
     SkColorTable* getColorTable() const { return fColorTable; }
@@ -390,27 +386,37 @@ public:
     */
     void notifyPixelsChanged() const;
 
-    /** Initialize the bitmap's pixels with the specified color+alpha, automatically converting into the correct format
-        for the bitmap's config. If the config is kRGB_565_Config, then the alpha value is ignored.
-        If the config is kA8_Config, then the r,g,b parameters are ignored.
-    */
-    void eraseARGB(U8CPU a, U8CPU r, U8CPU g, U8CPU b) const;
-    /** Initialize the bitmap's pixels with the specified color+alpha, automatically converting into the correct format
-        for the bitmap's config. If the config is kRGB_565_Config, then the alpha value is presumed
-        to be 0xFF. If the config is kA8_Config, then the r,g,b parameters are ignored and the
-        pixels are all set to 0xFF.
-    */
-    void eraseRGB(U8CPU r, U8CPU g, U8CPU b) const {
-        this->eraseARGB(0xFF, r, g, b);
-    }
-    /** Initialize the bitmap's pixels with the specified color, automatically converting into the correct format
-        for the bitmap's config. If the config is kRGB_565_Config, then the color's alpha value is presumed
-        to be 0xFF. If the config is kA8_Config, then only the color's alpha value is used.
-    */
+    /**
+     *  Fill the entire bitmap with the specified color.
+     *  If the bitmap's config does not support alpha (e.g. 565) then the alpha
+     *  of the color is ignored (treated as opaque). If the config only supports
+     *  alpha (e.g. A1 or A8) then the color's r,g,b components are ignored.
+     */
     void eraseColor(SkColor c) const {
         this->eraseARGB(SkColorGetA(c), SkColorGetR(c), SkColorGetG(c),
                         SkColorGetB(c));
     }
+
+    /**
+     *  Fill the entire bitmap with the specified color.
+     *  If the bitmap's config does not support alpha (e.g. 565) then the alpha
+     *  of the color is ignored (treated as opaque). If the config only supports
+     *  alpha (e.g. A1 or A8) then the color's r,g,b components are ignored.
+     */
+    void eraseARGB(U8CPU a, U8CPU r, U8CPU g, U8CPU b) const;
+
+    // DEPRECATED -- call eraseColor or eraseARGB
+    void eraseRGB(U8CPU r, U8CPU g, U8CPU b) const {
+        this->eraseARGB(0xFF, r, g, b);
+    }
+
+    /**
+     *  Fill the specified area of this bitmap with the specified color.
+     *  If the bitmap's config does not support alpha (e.g. 565) then the alpha
+     *  of the color is ignored (treated as opaque). If the config only supports
+     *  alpha (e.g. A1 or A8) then the color's r,g,b components are ignored.
+     */
+    void eraseArea(const SkIRect& area, SkColor c) const;
 
     /** Scroll (a subset of) the contents of this bitmap by dx/dy. If there are
         no pixels allocated (i.e. getPixels() returns null) the method will
@@ -533,23 +539,22 @@ public:
      */
     bool canCopyTo(Config newConfig) const;
 
-    bool hasMipMap() const;
+    /**
+     *  DEPRECATED -- will be replaced with API on SkPaint
+     */
     void buildMipMap(bool forceRebuild = false);
-    void freeMipMap();
-
-    /** Given scale factors sx, sy, determine the miplevel available in the
-        bitmap, and return it (this is the amount to shift matrix iterators
-        by). If dst is not null, it is set to the correct level.
-    */
-    int extractMipLevel(SkBitmap* dst, SkFixed sx, SkFixed sy);
 
 #ifdef SK_BUILD_FOR_ANDROID
     bool hasHardwareMipMap() const {
-        return fHasHardwareMipMap;
+        return (fFlags & kHasHardwareMipMap_Flag) != 0;
     }
 
     void setHasHardwareMipMap(bool hasHardwareMipMap) {
-        fHasHardwareMipMap = hasHardwareMipMap;
+        if (hasHardwareMipMap) {
+            fFlags |= kHasHardwareMipMap_Flag;
+        } else {
+            fFlags &= ~kHasHardwareMipMap_Flag;
+        }
     }
 #endif
 
@@ -653,7 +658,14 @@ private:
     enum Flags {
         kImageIsOpaque_Flag     = 0x01,
         kImageIsVolatile_Flag   = 0x02,
-        kImageIsImmutable_Flag  = 0x04
+        kImageIsImmutable_Flag  = 0x04,
+#ifdef SK_BUILD_FOR_ANDROID
+        /* A hint for the renderer responsible for drawing this bitmap
+         * indicating that it should attempt to use mipmaps when this bitmap
+         * is drawn scaled down.
+         */
+        kHasHardwareMipMap_Flag = 0x08,
+#endif
     };
 
     uint32_t    fRowBytes;
@@ -663,20 +675,18 @@ private:
     uint8_t     fFlags;
     uint8_t     fBytesPerPixel; // based on config
 
-#ifdef SK_BUILD_FOR_ANDROID
-    bool fHasHardwareMipMap;
-#endif
+    void internalErase(const SkIRect&, U8CPU a, U8CPU r, U8CPU g, U8CPU b)const;
 
     /* Internal computations for safe size.
     */
-    static Sk64 ComputeSafeSize64(Config config,
+    static Sk64 ComputeSafeSize64(Config   config,
                                   uint32_t width,
                                   uint32_t height,
-                                  uint32_t rowBytes);
+                                  size_t   rowBytes);
     static size_t ComputeSafeSize(Config   config,
                                   uint32_t width,
                                   uint32_t height,
-                                  uint32_t rowBytes);
+                                  size_t   rowBytes);
 
     /*  Unreference any pixelrefs or colortables
     */
@@ -684,6 +694,16 @@ private:
     void updatePixelsFromRef() const;
 
     static SkFixed ComputeMipLevel(SkFixed sx, SkFixed dy);
+
+    /** Given scale factors sx, sy, determine the miplevel available in the
+     bitmap, and return it (this is the amount to shift matrix iterators
+     by). If dst is not null, it is set to the correct level.
+     */
+    int extractMipLevel(SkBitmap* dst, SkFixed sx, SkFixed sy);
+    bool hasMipMap() const;
+    void freeMipMap();
+
+    friend struct SkBitmapProcState;
 };
 
 class SkAutoLockPixels : public SkNoncopyable {

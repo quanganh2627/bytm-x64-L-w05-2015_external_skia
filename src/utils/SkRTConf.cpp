@@ -76,7 +76,7 @@ void SkRTConfRegistry::possiblyDumpFile() const {
 // declared a correponding configuration object somewhere.
 void SkRTConfRegistry::validate() const {
     for (int i = 0 ; i < fConfigFileKeys.count() ; i++) {
-        if (fConfs.find(fConfigFileKeys[i]->c_str())) {
+        if (!fConfs.find(fConfigFileKeys[i]->c_str())) {
             SkDebugf("WARNING: You have config value %s in your configuration file, but I've never heard of that.\n", fConfigFileKeys[i]->c_str());
         }
     }
@@ -145,7 +145,7 @@ void SkRTConfRegistry::registerConf(SkRTConfBase *conf) {
     }
 }
 
-template <typename T> T doParse(const char *s, bool *success ) {
+template <typename T> T doParse(const char *, bool *success ) {
     SkDebugf("WARNING: Invoked non-specialized doParse function...\n");
     if (success) {
         *success = false;
@@ -177,18 +177,30 @@ template<> const char * doParse<const char *>(const char * s, bool *success) {
 }
 
 template<> int doParse<int>(const char * s, bool *success) {
+    if (success) {
+        *success = true;
+    }
     return atoi(s);
 }
 
 template<> unsigned int doParse<unsigned int>(const char * s, bool *success) {
+    if (success) {
+        *success = true;
+    }
     return (unsigned int) atoi(s);
 }
 
 template<> float doParse<float>(const char * s, bool *success) {
+    if (success) {
+        *success = true;
+    }
     return (float) atof(s);
 }
 
 template<> double doParse<double>(const char * s, bool *success) {
+    if (success) {
+        *success = true;
+    }
     return atof(s);
 }
 
@@ -203,9 +215,10 @@ static inline void str_replace(char *s, char search, char replace) {
 template<typename T> bool SkRTConfRegistry::parse(const char *name, T* value) {
     SkString *str = NULL;
 
-    for (int i = 0 ; i < fConfigFileKeys.count() ; i++) {
+    for (int i = fConfigFileKeys.count() - 1 ; i >= 0; i--) {
         if (fConfigFileKeys[i]->equals(name)) {
             str = fConfigFileValues[i];
+            break;
         }
     }
 

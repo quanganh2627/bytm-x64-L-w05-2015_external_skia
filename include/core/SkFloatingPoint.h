@@ -77,6 +77,8 @@ static inline float sk_float_copysign(float x, float y) {
     #define sk_float_isinf(x)       isinf(x)
 #endif
 
+#define sk_double_isnan(a)          sk_float_isnan(a)
+
 #ifdef SK_USE_FLOATBITS
     #define sk_float_floor2int(x)   SkFloatToIntFloor(x)
     #define sk_float_round2int(x)   SkFloatToIntRound(x)
@@ -91,7 +93,7 @@ extern const uint32_t gIEEENotANumber;
 extern const uint32_t gIEEEInfinity;
 extern const uint32_t gIEEENegativeInfinity;
 
-#define SK_FloatNaN                 (*reinterpret_cast<const float*>(&gIEEENotANumber))
-#define SK_FloatInfinity            (*reinterpret_cast<const float*>(&gIEEEInfinity))
-#define SK_FloatNegativeInfinity    (*reinterpret_cast<const float*>(&gIEEENegativeInfinity))
+#define SK_FloatNaN                 (*SkTCast<const float*>(&gIEEENotANumber))
+#define SK_FloatInfinity            (*SkTCast<const float*>(&gIEEEInfinity))
+#define SK_FloatNegativeInfinity    (*SkTCast<const float*>(&gIEEENegativeInfinity))
 #endif

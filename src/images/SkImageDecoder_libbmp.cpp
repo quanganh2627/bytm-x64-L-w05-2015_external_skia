@@ -6,46 +6,62 @@
  * found in the LICENSE file.
  */
 
- 
+
 #include "bmpdecoderhelper.h"
+#include "SkColorPriv.h"
 #include "SkImageDecoder.h"
 #include "SkScaledBitmapSampler.h"
 #include "SkStream.h"
-#include "SkColorPriv.h"
+#include "SkStreamHelpers.h"
 #include "SkTDArray.h"
 #include "SkTRegistry.h"
 
 class SkBMPImageDecoder : public SkImageDecoder {
 public:
     SkBMPImageDecoder() {}
-    
-    virtual Format getFormat() const {
+
+    virtual Format getFormat() const SK_OVERRIDE {
         return kBMP_Format;
     }
 
 protected:
-    virtual bool onDecode(SkStream* stream, SkBitmap* bm, Mode mode);
+    virtual bool onDecode(SkStream* stream, SkBitmap* bm, Mode mode) SK_OVERRIDE;
+
+private:
+    typedef SkImageDecoder INHERITED;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
 DEFINE_DECODER_CREATOR(BMPImageDecoder);
 ///////////////////////////////////////////////////////////////////////////////
 
-static SkImageDecoder* sk_libbmp_dfactory(SkStream* stream) {
+static bool is_bmp(SkStream* stream) {
     static const char kBmpMagic[] = { 'B', 'M' };
-    
-    size_t len = stream->getLength();
+
+
     char buffer[sizeof(kBmpMagic)];
-    
-    if (len > sizeof(kBmpMagic) &&
-            stream->read(buffer, sizeof(kBmpMagic)) == sizeof(kBmpMagic) &&
-            !memcmp(buffer, kBmpMagic, sizeof(kBmpMagic))) {
+
+    return stream->read(buffer, sizeof(kBmpMagic)) == sizeof(kBmpMagic) &&
+        !memcmp(buffer, kBmpMagic, sizeof(kBmpMagic));
+}
+
+static SkImageDecoder* sk_libbmp_dfactory(SkStream* stream) {
+    if (is_bmp(stream)) {
         return SkNEW(SkBMPImageDecoder);
     }
     return NULL;
 }
 
 static SkTRegistry<SkImageDecoder*, SkStream*> gReg(sk_libbmp_dfactory);
+
+static SkImageDecoder::Format get_format_bmp(SkStream* stream) {
+    if (is_bmp(stream)) {
+        return SkImageDecoder::kBMP_Format;
+    }
+    return SkImageDecoder::kUnknown_Format;
+}
+
+static SkTRegistry<SkImageDecoder::Format, SkStream*> gFormatReg(get_format_bmp);
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -61,14 +77,14 @@ public:
         if (fJustBounds) {
             return NULL;
         }
-        
+
         fRGB.setCount(width * height * 3);  // 3 == r, g, b
         return fRGB.begin();
     }
 
     int width() const { return fWidth; }
     int height() const { return fHeight; }
-    uint8_t* rgb() const { return fRGB.begin(); }
+    const uint8_t* rgb() const { return fRGB.begin(); }
 
 private:
     SkTDArray<uint8_t> fRGB;
@@ -78,14 +94,17 @@ private:
 };
 
 bool SkBMPImageDecoder::onDecode(SkStream* stream, SkBitmap* bm, Mode mode) {
+    // First read the entire stream, so that all of the data can be passed to
+    // the BmpDecoderHelper.
 
-    size_t length = stream->getLength();
-    SkAutoMalloc storage(length);
-    
-    if (stream->read(storage.get(), length) != length) {
-        return false;
+    // Allocated space used to hold the data.
+    SkAutoMalloc storage;
+    // Byte length of all of the data.
+    const size_t length = CopyStreamToStorage(&storage, stream);
+    if (0 == length) {
+        return 0;
     }
-    
+
     const bool justBounds = SkImageDecoder::kDecodeBounds_Mode == mode;
     SkBmpDecoderCallback callback(justBounds);
 
@@ -98,11 +117,11 @@ bool SkBMPImageDecoder::onDecode(SkStream* stream, SkBitmap* bm, Mode mode) {
             return false;
         }
     }
-    
+
     // we don't need this anymore, so free it now (before we try to allocate
     // the bitmap's pixels) rather than waiting for its destructor
     storage.free();
-    
+
     int width = callback.width();
     int height = callback.height();
     SkBitmap::Config config = this->getPrefConfig(k32Bit_SrcDepth, false);
@@ -115,34 +134,27 @@ bool SkBMPImageDecoder::onDecode(SkStream* stream, SkBitmap* bm, Mode mode) {
 
     SkScaledBitmapSampler sampler(width, height, getSampleSize());
 
-    if (justBounds) {
-        bm->setConfig(config, sampler.scaledWidth(), sampler.scaledHeight());
-        bm->setIsOpaque(true);
-        return true;
-    }
-#ifdef SK_BUILD_FOR_ANDROID
-    // No Bitmap reuse supported for this format
-    if (!bm->isNull()) {
-        return false;
-    }
-#endif
     bm->setConfig(config, sampler.scaledWidth(), sampler.scaledHeight());
     bm->setIsOpaque(true);
+
+    if (justBounds) {
+        return true;
+    }
 
     if (!this->allocPixelRef(bm, NULL)) {
         return false;
     }
-    
+
     SkAutoLockPixels alp(*bm);
-    
-    if (!sampler.begin(bm, SkScaledBitmapSampler::kRGB, getDitherImage())) {
+
+    if (!sampler.begin(bm, SkScaledBitmapSampler::kRGB, *this)) {
         return false;
     }
 
     const int srcRowBytes = width * 3;
     const int dstHeight = sampler.scaledHeight();
     const uint8_t* srcRow = callback.rgb();
-    
+
     srcRow += sampler.srcY0() * srcRowBytes;
     for (int y = 0; y < dstHeight; y++) {
         sampler.next(srcRow);

@@ -12,6 +12,7 @@
 #include "SkMetaData.h"
 #include "SkRasterClip.h"
 #include "SkRect.h"
+#include "SkRRect.h"
 #include "SkShader.h"
 
 SK_DEFINE_INST_COUNT(SkDevice)
@@ -31,6 +32,8 @@ SkDevice::SkDevice(const SkBitmap& bitmap)
 {
     fOrigin.setZero();
     fMetaData = NULL;
+
+    SkASSERT(SkBitmap::kARGB_4444_Config != bitmap.config());
 }
 
 SkDevice::SkDevice(const SkBitmap& bitmap, const SkDeviceProperties& deviceProperties)
@@ -216,32 +219,15 @@ bool SkDevice::readPixels(SkBitmap* bitmap, int x, int y,
     return result;
 }
 
-#ifdef SK_CPU_LENDIAN
-    #if   24 == SK_A32_SHIFT && 16 == SK_R32_SHIFT && \
-           8 == SK_G32_SHIFT &&  0 == SK_B32_SHIFT
-        const SkCanvas::Config8888 SkDevice::kPMColorAlias =
-            SkCanvas::kBGRA_Premul_Config8888;
-    #elif 24 == SK_A32_SHIFT &&  0 == SK_R32_SHIFT && \
-           8 == SK_G32_SHIFT && 16 == SK_B32_SHIFT
-        const SkCanvas::Config8888 SkDevice::kPMColorAlias =
-            SkCanvas::kRGBA_Premul_Config8888;
-    #else
-        const SkCanvas::Config8888 SkDevice::kPMColorAlias =
-            (SkCanvas::Config8888) -1;
-    #endif
+#if SK_PMCOLOR_BYTE_ORDER(B,G,R,A)
+    const SkCanvas::Config8888 SkDevice::kPMColorAlias =
+        SkCanvas::kBGRA_Premul_Config8888;
+#elif SK_PMCOLOR_BYTE_ORDER(R,G,B,A)
+    const SkCanvas::Config8888 SkDevice::kPMColorAlias =
+        SkCanvas::kRGBA_Premul_Config8888;
 #else
-    #if    0 == SK_A32_SHIFT &&   8 == SK_R32_SHIFT && \
-          16 == SK_G32_SHIFT &&  24 == SK_B32_SHIFT
-        const SkCanvas::Config8888 SkDevice::kPMColorAlias =
-            SkCanvas::kBGRA_Premul_Config8888;
-    #elif  0 == SK_A32_SHIFT &&  24 == SK_R32_SHIFT && \
-          16 == SK_G32_SHIFT &&   8 == SK_B32_SHIFT
-        const SkCanvas::Config8888 SkDevice::kPMColorAlias =
-            SkCanvas::kRGBA_Premul_Config8888;
-    #else
-        const SkCanvas::Config8888 SkDevice::kPMColorAlias =
-            (SkCanvas::Config8888) -1;
-    #endif
+    const SkCanvas::Config8888 SkDevice::kPMColorAlias =
+        (SkCanvas::Config8888) -1;
 #endif
 
 #include <SkConfig8888.h>
@@ -348,6 +334,7 @@ void SkDevice::drawPaint(const SkDraw& draw, const SkPaint& paint) {
 
 void SkDevice::drawPoints(const SkDraw& draw, SkCanvas::PointMode mode, size_t count,
                           const SkPoint pts[], const SkPaint& paint) {
+    CHECK_FOR_NODRAW_ANNOTATION(paint);
     draw.drawPoints(mode, count, pts, paint);
 }
 
@@ -361,8 +348,19 @@ void SkDevice::drawOval(const SkDraw& draw, const SkRect& oval, const SkPaint& p
 
     SkPath path;
     path.addOval(oval);
-    // call the non-virtual version
-    this->SkDevice::drawPath(draw, path, paint, NULL, true);
+    // call the VIRTUAL version, so any subclasses who do handle drawPath aren't
+    // required to override drawOval.
+    this->drawPath(draw, path, paint, NULL, true);
+}
+
+void SkDevice::drawRRect(const SkDraw& draw, const SkRRect& rrect, const SkPaint& paint) {
+    CHECK_FOR_NODRAW_ANNOTATION(paint);
+
+    SkPath  path;
+    path.addRRect(rrect);
+    // call the VIRTUAL version, so any subclasses who do handle drawPath aren't
+    // required to override drawRRect.
+    this->drawPath(draw, path, paint, NULL, true);
 }
 
 void SkDevice::drawPath(const SkDraw& draw, const SkPath& path,
@@ -373,18 +371,8 @@ void SkDevice::drawPath(const SkDraw& draw, const SkPath& path,
 }
 
 void SkDevice::drawBitmap(const SkDraw& draw, const SkBitmap& bitmap,
-                          const SkIRect* srcRect,
                           const SkMatrix& matrix, const SkPaint& paint) {
-    SkBitmap        tmp;    // storage if we need a subset of bitmap
-    const SkBitmap* bitmapPtr = &bitmap;
-
-    if (srcRect) {
-        if (!bitmap.extractSubset(&tmp, *srcRect)) {
-            return;     // extraction failed
-        }
-        bitmapPtr = &tmp;
-    }
-    draw.drawBitmap(*bitmapPtr, matrix, paint);
+    draw.drawBitmap(bitmap, matrix, paint);
 }
 
 void SkDevice::drawBitmapRect(const SkDraw& draw, const SkBitmap& bitmap,
@@ -451,7 +439,7 @@ void SkDevice::drawBitmapRect(const SkDraw& draw, const SkBitmap& bitmap,
         // We can go faster by just calling drawBitmap, which will concat the
         // matrix with the CTM, and try to call drawSprite if it can. If not,
         // it will make a shader and call drawRect, as we do below.
-        this->drawBitmap(draw, *bitmapPtr, NULL, matrix, paint);
+        this->drawBitmap(draw, *bitmapPtr, matrix, paint);
         return;
     }
 

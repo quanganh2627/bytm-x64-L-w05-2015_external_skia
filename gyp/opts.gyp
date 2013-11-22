@@ -23,35 +23,38 @@
       'product_name': 'skia_opts',
       'type': 'static_library',
       'standalone_static_library': 1,
+      'dependencies': [
+        'core.gyp:*',
+      ],
       'include_dirs': [
-        '../include/config',
-        '../include/core',
         '../src/core',
         '../src/opts',
       ],
       'conditions': [
         [ 'skia_arch_type == "x86" and skia_os != "ios"', {
           'conditions': [
-            [ 'skia_os in ["linux", "freebsd", "openbsd", "solaris", "nacl"]', {
+            [ 'skia_os in ["linux", "freebsd", "openbsd", "solaris", "nacl", "chromeos", "android"]', {
               'cflags': [
                 '-msse2',
               ],
             }],
-            [ 'skia_os != "android"', {
-              'dependencies': [
-                'opts_ssse3',
-              ],
-            }],
+          ],
+          'include_dirs': [
+            '../include/utils',
+          ],
+          'dependencies': [
+            'opts_ssse3',
           ],
           'sources': [
             '../src/opts/opts_check_SSE2.cpp',
             '../src/opts/SkBitmapProcState_opts_SSE2.cpp',
+            '../src/opts/SkBitmapFilter_opts_SSE2.cpp',
             '../src/opts/SkBlitRow_opts_SSE2.cpp',
             '../src/opts/SkBlitRect_opts_SSE2.cpp',
             '../src/opts/SkUtils_opts_SSE2.cpp',
           ],
         }],
-        [ 'skia_arch_type == "arm" and armv7 == 1', {
+        [ 'skia_arch_type == "arm" and arm_version >= 7', {
           # The assembly uses the frame pointer register (r7 in Thumb/r11 in
           # ARM), the compiler doesn't like that.
           'cflags!': [
@@ -89,7 +92,7 @@
             }],
           ],
         }],
-        [ '(skia_arch_type == "arm" and armv7 == 0) or (skia_os == "ios")', {
+        [ '(skia_arch_type == "arm" and arm_version < 7) or (skia_os == "ios")', {
           'sources': [
             '../src/opts/SkBitmapProcState_opts_none.cpp',
             '../src/opts/SkBlitRow_opts_none.cpp',
@@ -107,25 +110,19 @@
       'product_name': 'skia_opts_ssse3',
       'type': 'static_library',
       'standalone_static_library': 1,
+      'dependencies': [
+        'core.gyp:*',
+      ],
       'include_dirs': [
-        '../include/config',
-        '../include/core',
         '../src/core',
       ],
       'conditions': [
-        [ 'skia_os in ["linux", "freebsd", "openbsd", "solaris", "nacl"]', {
+        [ 'skia_os in ["linux", "freebsd", "openbsd", "solaris", "nacl", "chromeos", "android"]', {
           'cflags': [
             '-mssse3',
           ],
         }],
-        # TODO(epoger): the following will enable SSSE3 on Macs, but it will
-        # break once we set OTHER_CFLAGS anywhere else (the first setting will
-        # be replaced, not added to)
-        [ 'skia_os in ["mac"]', {
-          'xcode_settings': {
-            'OTHER_CFLAGS': ['-mssse3',],
-          },
-        }],
+        # (Mac has -mssse3 globally.)
         [ 'skia_arch_type == "x86"', {
           'sources': [
             '../src/opts/SkBitmapProcState_opts_SSSE3.cpp',
@@ -142,9 +139,10 @@
       'product_name': 'skia_opts_neon',
       'type': 'static_library',
       'standalone_static_library': 1,
+      'dependencies': [
+        'core.gyp:*',
+      ],
       'include_dirs': [
-        '../include/config',
-        '../include/core',
         '../src/core',
         '../src/opts',
       ],

@@ -188,12 +188,14 @@ public:
 
     friend bool operator==(const SkRRect& a, const SkRRect& b) {
         return a.fRect == b.fRect &&
-               SkScalarsEqual(SkTCast<const SkScalar*>(a.fRadii), SkTCast<const SkScalar*>(b.fRadii), 8);
+               SkScalarsEqual(a.fRadii[0].asScalars(),
+                              b.fRadii[0].asScalars(), 8);
     }
 
     friend bool operator!=(const SkRRect& a, const SkRRect& b) {
         return a.fRect != b.fRect ||
-               !SkScalarsEqual(SkTCast<const SkScalar*>(a.fRadii), SkTCast<const SkScalar*>(b.fRadii), 8);
+               !SkScalarsEqual(a.fRadii[0].asScalars(),
+                               b.fRadii[0].asScalars(), 8);
     }
 
     /**
@@ -249,6 +251,12 @@ public:
         this->inset(-dx, -dy, this);
     }
 
+    /**
+     *  Returns true if 'rect' is wholy inside the RR, and both
+     *  are not empty.
+     */
+    bool contains(const SkRect& rect) const;
+
     SkDEBUGCODE(void validate() const;)
 
     enum {
@@ -278,6 +286,7 @@ private:
     // uninitialized data
 
     void computeType() const;
+    bool checkCornerContainment(SkScalar x, SkScalar y) const;
 
     // to access fRadii directly
     friend class SkPath;

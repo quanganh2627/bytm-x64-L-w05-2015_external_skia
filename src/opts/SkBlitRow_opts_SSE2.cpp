@@ -10,6 +10,8 @@
 #include "SkBitmapProcState_opts_SSE2.h"
 #include "SkColorPriv.h"
 #include "SkUtils.h"
+#include "SkDither.h"
+#include "SkMathPriv.h"
 
 #include <emmintrin.h>
 
@@ -544,149 +546,232 @@ void SkARGB32_A8_BlitMask_SSE2(void* device, size_t dstRB, const void* maskPtr,
     #define SkPackedB16x5ToUnmaskedB32x5_SSE2(x) (_mm_srli_epi32(x, -SK_B16x5_B32x5_SHIFT))
 #endif
 
-static __m128i SkBlendLCD16_SSE2(__m128i &srci, __m128i &dst,
-                                 __m128i &mask, __m128i &scale) {
+static __m128i SkBlendLCD16_SSE2(__m128i &src, __m128i &dst,
+                                 __m128i &mask, __m128i &srcA) {
+    // In the following comments, the components of src, dst and mask are
+    // abbreviated as (s)rc, (d)st, and (m)ask. Color components are marked
+    // by an R, G, B, or A suffix. Components of one of the four pixels that
+    // are processed in parallel are marked with 0, 1, 2, and 3. "d1B", for
+    // example is the blue channel of the second destination pixel. Memory
+    // layout is shown for an ARGB byte order in a color value.
+
+    // src and srcA store 8-bit values interleaved with zeros.
+    // src  = (0xFF, 0, sR, 0, sG, 0, sB, 0, 0xFF, 0, sR, 0, sG, 0, sB, 0)
+    // srcA = (srcA, 0, srcA, 0, srcA, 0, srcA, 0,
+    //         srcA, 0, srcA, 0, srcA, 0, srcA, 0)
+    // mask stores 16-bit values (compressed three channels) interleaved with zeros.
+    // Lo and Hi denote the low and high bytes of a 16-bit value, respectively.
+    // mask = (m0RGBLo, m0RGBHi, 0, 0, m1RGBLo, m1RGBHi, 0, 0,
+    //         m2RGBLo, m2RGBHi, 0, 0, m3RGBLo, m3RGBHi, 0, 0)
+
     // Get the R,G,B of each 16bit mask pixel, we want all of them in 5 bits.
+    // r = (0, m0R, 0, 0, 0, m1R, 0, 0, 0, m2R, 0, 0, 0, m3R, 0, 0)
     __m128i r = _mm_and_si128(SkPackedR16x5ToUnmaskedR32x5_SSE2(mask),
                               _mm_set1_epi32(0x1F << SK_R32_SHIFT));
 
+    // g = (0, 0, m0G, 0, 0, 0, m1G, 0, 0, 0, m2G, 0, 0, 0, m3G, 0)
     __m128i g = _mm_and_si128(SkPackedG16x5ToUnmaskedG32x5_SSE2(mask),
                               _mm_set1_epi32(0x1F << SK_G32_SHIFT));
 
+    // b = (0, 0, 0, m0B, 0, 0, 0, m1B, 0, 0, 0, m2B, 0, 0, 0, m3B)
     __m128i b = _mm_and_si128(SkPackedB16x5ToUnmaskedB32x5_SSE2(mask),
                               _mm_set1_epi32(0x1F << SK_B32_SHIFT));
 
     // Pack the 4 16bit mask pixels into 4 32bit pixels, (p0, p1, p2, p3)
+    // Each component (m0R, m0G, etc.) is then a 5-bit value aligned to an
+    // 8-bit position
+    // mask = (0, m0R, m0G, m0B, 0, m1R, m1G, m1B,
+    //         0, m2R, m2G, m2B, 0, m3R, m3G, m3B)
     mask = _mm_or_si128(_mm_or_si128(r, g), b);
 
     // Interleave R,G,B into the lower byte of word.
+    // i.e. split the sixteen 8-bit values from mask into two sets of eight
+    // 16-bit values, padded by zero.
     __m128i maskLo, maskHi;
+    // maskLo = (0, 0, m0R, 0, m0G, 0, m0B, 0, 0, 0, m1R, 0, m1G, 0, m1B, 0)
     maskLo = _mm_unpacklo_epi8(mask, _mm_setzero_si128());
+    // maskHi = (0, 0, m2R, 0, m2G, 0, m2B, 0, 0, 0, m3R, 0, m3G, 0, m3B, 0)
     maskHi = _mm_unpackhi_epi8(mask, _mm_setzero_si128());
 
-    // Upscale to 0..32
+    // Upscale from 0..31 to 0..32
+    // (allows to replace division by left-shift further down)
+    // Left-shift each component by 4 and add the result back to that component,
+    // mapping numbers in the range 0..15 to 0..15, and 16..31 to 17..32
     maskLo = _mm_add_epi16(maskLo, _mm_srli_epi16(maskLo, 4));
     maskHi = _mm_add_epi16(maskHi, _mm_srli_epi16(maskHi, 4));
 
-    maskLo = _mm_mullo_epi16(maskLo, scale);
-    maskHi = _mm_mullo_epi16(maskHi, scale);
+    // Multiply each component of maskLo and maskHi by srcA
+    maskLo = _mm_mullo_epi16(maskLo, srcA);
+    maskHi = _mm_mullo_epi16(maskHi, srcA);
 
+    // Left shift mask components by 8 (divide by 256)
     maskLo = _mm_srli_epi16(maskLo, 8);
     maskHi = _mm_srli_epi16(maskHi, 8);
 
-    // Interleave R,G,B into the lower byte of the word.
+    // Interleave R,G,B into the lower byte of the word
+    // dstLo = (0, 0, d0R, 0, d0G, 0, d0B, 0, 0, 0, d1R, 0, d1G, 0, d1B, 0)
     __m128i dstLo = _mm_unpacklo_epi8(dst, _mm_setzero_si128());
+    // dstLo = (0, 0, d2R, 0, d2G, 0, d2B, 0, 0, 0, d3R, 0, d3G, 0, d3B, 0)
     __m128i dstHi = _mm_unpackhi_epi8(dst, _mm_setzero_si128());
 
-    maskLo = _mm_mullo_epi16(maskLo, _mm_sub_epi16(srci, dstLo));
-    maskHi = _mm_mullo_epi16(maskHi, _mm_sub_epi16(srci, dstHi));
+    // mask = (src - dst) * mask
+    maskLo = _mm_mullo_epi16(maskLo, _mm_sub_epi16(src, dstLo));
+    maskHi = _mm_mullo_epi16(maskHi, _mm_sub_epi16(src, dstHi));
 
+    // mask = (src - dst) * mask >> 5
     maskLo = _mm_srai_epi16(maskLo, 5);
     maskHi = _mm_srai_epi16(maskHi, 5);
 
     // Add two pixels into result.
+    // result = dst + ((src - dst) * mask >> 5)
     __m128i resultLo = _mm_add_epi16(dstLo, maskLo);
     __m128i resultHi = _mm_add_epi16(dstHi, maskHi);
 
-    // Pack into 4 32bit dst pixels
+    // Pack into 4 32bit dst pixels.
+    // resultLo and resultHi contain eight 16-bit components (two pixels) each.
+    // Merge into one SSE regsiter with sixteen 8-bit values (four pixels),
+    // clamping to 255 if necessary.
     return _mm_packus_epi16(resultLo, resultHi);
 }
 
-static __m128i SkBlendLCD16Opaque_SSE2(__m128i &srci, __m128i &dst,
+static __m128i SkBlendLCD16Opaque_SSE2(__m128i &src, __m128i &dst,
                                        __m128i &mask) {
+    // In the following comments, the components of src, dst and mask are
+    // abbreviated as (s)rc, (d)st, and (m)ask. Color components are marked
+    // by an R, G, B, or A suffix. Components of one of the four pixels that
+    // are processed in parallel are marked with 0, 1, 2, and 3. "d1B", for
+    // example is the blue channel of the second destination pixel. Memory
+    // layout is shown for an ARGB byte order in a color value.
+
+    // src and srcA store 8-bit values interleaved with zeros.
+    // src  = (0xFF, 0, sR, 0, sG, 0, sB, 0, 0xFF, 0, sR, 0, sG, 0, sB, 0)
+    // mask stores 16-bit values (shown as high and low bytes) interleaved with
+    // zeros
+    // mask = (m0RGBLo, m0RGBHi, 0, 0, m1RGBLo, m1RGBHi, 0, 0,
+    //         m2RGBLo, m2RGBHi, 0, 0, m3RGBLo, m3RGBHi, 0, 0)
+
     // Get the R,G,B of each 16bit mask pixel, we want all of them in 5 bits.
+    // r = (0, m0R, 0, 0, 0, m1R, 0, 0, 0, m2R, 0, 0, 0, m3R, 0, 0)
     __m128i r = _mm_and_si128(SkPackedR16x5ToUnmaskedR32x5_SSE2(mask),
                               _mm_set1_epi32(0x1F << SK_R32_SHIFT));
 
+    // g = (0, 0, m0G, 0, 0, 0, m1G, 0, 0, 0, m2G, 0, 0, 0, m3G, 0)
     __m128i g = _mm_and_si128(SkPackedG16x5ToUnmaskedG32x5_SSE2(mask),
                               _mm_set1_epi32(0x1F << SK_G32_SHIFT));
 
+    // b = (0, 0, 0, m0B, 0, 0, 0, m1B, 0, 0, 0, m2B, 0, 0, 0, m3B)
     __m128i b = _mm_and_si128(SkPackedB16x5ToUnmaskedB32x5_SSE2(mask),
                               _mm_set1_epi32(0x1F << SK_B32_SHIFT));
 
     // Pack the 4 16bit mask pixels into 4 32bit pixels, (p0, p1, p2, p3)
+    // Each component (m0R, m0G, etc.) is then a 5-bit value aligned to an
+    // 8-bit position
+    // mask = (0, m0R, m0G, m0B, 0, m1R, m1G, m1B,
+    //         0, m2R, m2G, m2B, 0, m3R, m3G, m3B)
     mask = _mm_or_si128(_mm_or_si128(r, g), b);
 
     // Interleave R,G,B into the lower byte of word.
+    // i.e. split the sixteen 8-bit values from mask into two sets of eight
+    // 16-bit values, padded by zero.
     __m128i maskLo, maskHi;
+    // maskLo = (0, 0, m0R, 0, m0G, 0, m0B, 0, 0, 0, m1R, 0, m1G, 0, m1B, 0)
     maskLo = _mm_unpacklo_epi8(mask, _mm_setzero_si128());
+    // maskHi = (0, 0, m2R, 0, m2G, 0, m2B, 0, 0, 0, m3R, 0, m3G, 0, m3B, 0)
     maskHi = _mm_unpackhi_epi8(mask, _mm_setzero_si128());
 
-    // Upscale to 0..32
+    // Upscale from 0..31 to 0..32
+    // (allows to replace division by left-shift further down)
+    // Left-shift each component by 4 and add the result back to that component,
+    // mapping numbers in the range 0..15 to 0..15, and 16..31 to 17..32
     maskLo = _mm_add_epi16(maskLo, _mm_srli_epi16(maskLo, 4));
     maskHi = _mm_add_epi16(maskHi, _mm_srli_epi16(maskHi, 4));
 
-    // Interleave R,G,B into the lower byte of the word.
+    // Interleave R,G,B into the lower byte of the word
+    // dstLo = (0, 0, d0R, 0, d0G, 0, d0B, 0, 0, 0, d1R, 0, d1G, 0, d1B, 0)
     __m128i dstLo = _mm_unpacklo_epi8(dst, _mm_setzero_si128());
+    // dstLo = (0, 0, d2R, 0, d2G, 0, d2B, 0, 0, 0, d3R, 0, d3G, 0, d3B, 0)
     __m128i dstHi = _mm_unpackhi_epi8(dst, _mm_setzero_si128());
 
-    maskLo = _mm_mullo_epi16(maskLo, _mm_sub_epi16(srci, dstLo));
-    maskHi = _mm_mullo_epi16(maskHi, _mm_sub_epi16(srci, dstHi));
+    // mask = (src - dst) * mask
+    maskLo = _mm_mullo_epi16(maskLo, _mm_sub_epi16(src, dstLo));
+    maskHi = _mm_mullo_epi16(maskHi, _mm_sub_epi16(src, dstHi));
 
+    // mask = (src - dst) * mask >> 5
     maskLo = _mm_srai_epi16(maskLo, 5);
     maskHi = _mm_srai_epi16(maskHi, 5);
 
     // Add two pixels into result.
+    // result = dst + ((src - dst) * mask >> 5)
     __m128i resultLo = _mm_add_epi16(dstLo, maskLo);
     __m128i resultHi = _mm_add_epi16(dstHi, maskHi);
 
     // Pack into 4 32bit dst pixels and force opaque.
+    // resultLo and resultHi contain eight 16-bit components (two pixels) each.
+    // Merge into one SSE regsiter with sixteen 8-bit values (four pixels),
+    // clamping to 255 if necessary. Set alpha components to 0xFF.
     return _mm_or_si128(_mm_packus_epi16(resultLo, resultHi),
                         _mm_set1_epi32(SK_A32_MASK << SK_A32_SHIFT));
 }
 
-void SkBlitLCD16Row_SSE2(SkPMColor dst[], const uint16_t src[],
-                         SkColor color, int width, SkPMColor) {
+void SkBlitLCD16Row_SSE2(SkPMColor dst[], const uint16_t mask[],
+                         SkColor src, int width, SkPMColor) {
     if (width <= 0) {
         return;
     }
 
-    int srcA = SkColorGetA(color);
-    int srcR = SkColorGetR(color);
-    int srcG = SkColorGetG(color);
-    int srcB = SkColorGetB(color);
+    int srcA = SkColorGetA(src);
+    int srcR = SkColorGetR(src);
+    int srcG = SkColorGetG(src);
+    int srcB = SkColorGetB(src);
 
     srcA = SkAlpha255To256(srcA);
 
     if (width >= 4) {
         SkASSERT(((size_t)dst & 0x03) == 0);
         while (((size_t)dst & 0x0F) != 0) {
-            *dst = SkBlendLCD16(srcA, srcR, srcG, srcB, *dst, *src);
-            src++;
+            *dst = SkBlendLCD16(srcA, srcR, srcG, srcB, *dst, *mask);
+            mask++;
             dst++;
             width--;
         }
 
         __m128i *d = reinterpret_cast<__m128i*>(dst);
-        __m128i srci = _mm_set1_epi32(SkPackARGB32(0xFF, srcR, srcG, srcB));
-        srci = _mm_unpacklo_epi8(srci, _mm_setzero_si128());
-        __m128i scale = _mm_set1_epi16(srcA);
+        // Set alpha to 0xFF and replicate source four times in SSE register.
+        __m128i src_sse = _mm_set1_epi32(SkPackARGB32(0xFF, srcR, srcG, srcB));
+        // Interleave with zeros to get two sets of four 16-bit values.
+        src_sse = _mm_unpacklo_epi8(src_sse, _mm_setzero_si128());
+        // Set srcA_sse to contain eight copies of srcA, padded with zero.
+        // src_sse=(0xFF, 0, sR, 0, sG, 0, sB, 0, 0xFF, 0, sR, 0, sG, 0, sB, 0)
+        __m128i srcA_sse = _mm_set1_epi16(srcA);
         while (width >= 4) {
-            __m128i dst_pixel = _mm_load_si128(d);
-            __m128i mask_pixel = _mm_loadl_epi64(
-                                     reinterpret_cast<const __m128i*>(src));
+            // Load four destination pixels into dst_sse.
+            __m128i dst_sse = _mm_load_si128(d);
+            // Load four 16-bit masks into lower half of mask_sse.
+            __m128i mask_sse = _mm_loadl_epi64(
+                                   reinterpret_cast<const __m128i*>(mask));
 
-            // Check whether mask_pixels are equal to 0 and get the highest bit
-            // of each byte of result, if mask pixes are all zero, we will get
+            // Check whether masks are equal to 0 and get the highest bit
+            // of each byte of result, if masks are all zero, we will get
             // pack_cmp to 0xFFFF
-            int pack_cmp = _mm_movemask_epi8(_mm_cmpeq_epi16(mask_pixel,
+            int pack_cmp = _mm_movemask_epi8(_mm_cmpeq_epi16(mask_sse,
                                              _mm_setzero_si128()));
 
             // if mask pixels are not all zero, we will blend the dst pixels
             if (pack_cmp != 0xFFFF) {
                 // Unpack 4 16bit mask pixels to
-                // (p0, 0, p1, 0, p2, 0, p3, 0)
-                mask_pixel = _mm_unpacklo_epi16(mask_pixel,
-                                                _mm_setzero_si128());
+                // mask_sse = (m0RGBLo, m0RGBHi, 0, 0, m1RGBLo, m1RGBHi, 0, 0,
+                //             m2RGBLo, m2RGBHi, 0, 0, m3RGBLo, m3RGBHi, 0, 0)
+                mask_sse = _mm_unpacklo_epi16(mask_sse,
+                                              _mm_setzero_si128());
 
                 // Process 4 32bit dst pixels
-                __m128i result = SkBlendLCD16_SSE2(srci, dst_pixel,
-                                                   mask_pixel, scale);
+                __m128i result = SkBlendLCD16_SSE2(src_sse, dst_sse,
+                                                   mask_sse, srcA_sse);
                 _mm_store_si128(d, result);
             }
 
             d++;
-            src += 4;
+            mask += 4;
             width -= 4;
         }
 
@@ -694,61 +779,67 @@ void SkBlitLCD16Row_SSE2(SkPMColor dst[], const uint16_t src[],
     }
 
     while (width > 0) {
-        *dst = SkBlendLCD16(srcA, srcR, srcG, srcB, *dst, *src);
-        src++;
+        *dst = SkBlendLCD16(srcA, srcR, srcG, srcB, *dst, *mask);
+        mask++;
         dst++;
         width--;
     }
 }
 
-void SkBlitLCD16OpaqueRow_SSE2(SkPMColor dst[], const uint16_t src[],
-                               SkColor color, int width, SkPMColor opaqueDst) {
+void SkBlitLCD16OpaqueRow_SSE2(SkPMColor dst[], const uint16_t mask[],
+                               SkColor src, int width, SkPMColor opaqueDst) {
     if (width <= 0) {
         return;
     }
 
-    int srcR = SkColorGetR(color);
-    int srcG = SkColorGetG(color);
-    int srcB = SkColorGetB(color);
+    int srcR = SkColorGetR(src);
+    int srcG = SkColorGetG(src);
+    int srcB = SkColorGetB(src);
 
     if (width >= 4) {
         SkASSERT(((size_t)dst & 0x03) == 0);
         while (((size_t)dst & 0x0F) != 0) {
-            *dst = SkBlendLCD16Opaque(srcR, srcG, srcB, *dst, *src, opaqueDst);
-            src++;
+            *dst = SkBlendLCD16Opaque(srcR, srcG, srcB, *dst, *mask, opaqueDst);
+            mask++;
             dst++;
             width--;
         }
 
         __m128i *d = reinterpret_cast<__m128i*>(dst);
-        __m128i srci = _mm_set1_epi32(SkPackARGB32(0xFF, srcR, srcG, srcB));
-        srci = _mm_unpacklo_epi8(srci, _mm_setzero_si128());
+        // Set alpha to 0xFF and replicate source four times in SSE register.
+        __m128i src_sse = _mm_set1_epi32(SkPackARGB32(0xFF, srcR, srcG, srcB));
+        // Set srcA_sse to contain eight copies of srcA, padded with zero.
+        // src_sse=(0xFF, 0, sR, 0, sG, 0, sB, 0, 0xFF, 0, sR, 0, sG, 0, sB, 0)
+        src_sse = _mm_unpacklo_epi8(src_sse, _mm_setzero_si128());
         while (width >= 4) {
-            __m128i dst_pixel = _mm_load_si128(d);
-            __m128i mask_pixel = _mm_loadl_epi64(
-                                     reinterpret_cast<const __m128i*>(src));
+            // Load four destination pixels into dst_sse.
+            __m128i dst_sse = _mm_load_si128(d);
+            // Load four 16-bit masks into lower half of mask_sse.
+            __m128i mask_sse = _mm_loadl_epi64(
+                                   reinterpret_cast<const __m128i*>(mask));
 
-            // Check whether mask_pixels are equal to 0 and get the highest bit
-            // of each byte of result, if mask pixes are all zero, we will get
+            // Check whether masks are equal to 0 and get the highest bit
+            // of each byte of result, if masks are all zero, we will get
             // pack_cmp to 0xFFFF
-            int pack_cmp = _mm_movemask_epi8(_mm_cmpeq_epi16(mask_pixel,
+            int pack_cmp = _mm_movemask_epi8(_mm_cmpeq_epi16(mask_sse,
                                              _mm_setzero_si128()));
 
             // if mask pixels are not all zero, we will blend the dst pixels
             if (pack_cmp != 0xFFFF) {
                 // Unpack 4 16bit mask pixels to
-                // (p0, 0, p1, 0, p2, 0, p3, 0)
-                mask_pixel = _mm_unpacklo_epi16(mask_pixel,
-                                                _mm_setzero_si128());
+                // mask_sse = (m0RGBLo, m0RGBHi, 0, 0, m1RGBLo, m1RGBHi, 0, 0,
+                //             m2RGBLo, m2RGBHi, 0, 0, m3RGBLo, m3RGBHi, 0, 0)
+                mask_sse = _mm_unpacklo_epi16(mask_sse,
+                                              _mm_setzero_si128());
 
                 // Process 4 32bit dst pixels
-                __m128i result = SkBlendLCD16Opaque_SSE2(srci, dst_pixel,
-                                                         mask_pixel);
+                __m128i result = SkBlendLCD16Opaque_SSE2(src_sse, dst_sse,
+                                                         mask_sse);
                 _mm_store_si128(d, result);
             }
 
             d++;
-            src += 4;
+            mask += 4;
             width -= 4;
         }
 
@@ -756,9 +847,799 @@ void SkBlitLCD16OpaqueRow_SSE2(SkPMColor dst[], const uint16_t src[],
     }
 
     while (width > 0) {
-        *dst = SkBlendLCD16Opaque(srcR, srcG, srcB, *dst, *src, opaqueDst);
-        src++;
+        *dst = SkBlendLCD16Opaque(srcR, srcG, srcB, *dst, *mask, opaqueDst);
+        mask++;
         dst++;
         width--;
+    }
+}
+
+/* SSE2 version of S32A_D565_Blend()
+ * portable version is in core/SkBlitRow_D16.cpp
+ */
+
+void S32A_D565_Blend_SSE2(uint16_t* SK_RESTRICT dst, const SkPMColor* SK_RESTRICT src,
+        int count, U8CPU alpha, int /*x*/, int /*y*/) {
+    SkASSERT(255 > alpha);
+
+    while (((size_t)src & 0xF ) && count-- > 0 )
+    {
+        SkPMColor sc = *src++;
+        if (sc) {
+            uint16_t dc = *dst;
+            unsigned dst_scale = 255 - SkMulDiv255Round(SkGetPackedA32(sc), alpha);
+            unsigned dr = SkMulS16(SkPacked32ToR16(sc), alpha)
+                    + SkMulS16(SkGetPackedR16(dc), dst_scale);
+            unsigned dg = SkMulS16(SkPacked32ToG16(sc), alpha)
+                    + SkMulS16(SkGetPackedG16(dc), dst_scale);
+            unsigned db = SkMulS16(SkPacked32ToB16(sc), alpha)
+                    + SkMulS16(SkGetPackedB16(dc), dst_scale);
+            *dst = SkPackRGB16(SkDiv255Round(dr), SkDiv255Round(dg), SkDiv255Round(db));
+        }
+        dst++;
+     }
+
+    __m128i v_alpha = _mm_set1_epi16(alpha);
+    __m128i v_128 = _mm_set1_epi16(128);
+
+    while (count >= 8) {
+
+        __m128i src_pixel_l = _mm_load_si128((const __m128i*)(src));
+        __m128i src_pixel_h = _mm_load_si128((const __m128i*)(src+4));
+
+        // compute dst_scale
+        __m128i dst_scale = _mm_srli_epi32(src_pixel_l, 24);
+        dst_scale = _mm_packs_epi32(dst_scale, _mm_srli_epi32(src_pixel_h, 24));
+
+        dst_scale = _mm_mullo_epi16(dst_scale, v_alpha);
+        dst_scale = _mm_add_epi16(dst_scale, v_128);
+        dst_scale = _mm_add_epi16(dst_scale, _mm_srli_epi16(dst_scale, 8));
+        dst_scale = _mm_srli_epi16(dst_scale, 8);
+        dst_scale = _mm_sub_epi16(_mm_set1_epi16(255), dst_scale);
+
+        __m128i dst_pixel = _mm_loadu_si128((__m128i *)dst);
+
+        // SkMulS16(SkPacked32ToR16(sc), alpha)
+        __m128i src_r_l = _mm_srli_epi32(src_pixel_l, 3);
+        __m128i src_r_h = _mm_srli_epi32(src_pixel_h, 3);
+        src_r_l = _mm_and_si128(src_r_l, _mm_set1_epi32(0x1F));
+        src_r_h = _mm_and_si128(src_r_h, _mm_set1_epi32(0x1F));
+        src_r_l = _mm_packs_epi32(src_r_l, src_r_h);
+        src_r_l = _mm_mullo_epi16(src_r_l, v_alpha);
+
+        // SkMulS16(SkGetPackedR16(dc), dst_scale)
+        __m128i dst_r = _mm_srli_epi16(dst_pixel, SK_R16_SHIFT);
+        dst_r = _mm_mullo_epi16(dst_r, dst_scale);
+        dst_r = _mm_add_epi16(dst_r, src_r_l);
+        dst_r = _mm_add_epi16(dst_r, v_128);
+        // add and shift
+        dst_r = _mm_add_epi16(dst_r, _mm_srli_epi16(dst_r, 8));
+        dst_r = _mm_srli_epi16(dst_r, 8);
+
+        // SkMulS16(SkPacked32ToG16(sc), alpha)
+
+        __m128i src_g_l = _mm_srli_epi32(src_pixel_l, 10);
+        __m128i src_g_h = _mm_srli_epi32(src_pixel_h, 10);
+        src_g_l = _mm_and_si128(src_g_l, _mm_set1_epi32(0x3F));
+        src_g_h = _mm_and_si128(src_g_h, _mm_set1_epi32(0x3F));
+        src_g_l = _mm_packs_epi32(src_g_l, src_g_h);
+        src_g_l = _mm_mullo_epi16(src_g_l, v_alpha);
+
+        // SkMulS16(SkGetPackedG16(dc), dst_scale)
+        __m128i dst_g = _mm_srli_epi16(dst_pixel, SK_G16_SHIFT);
+        dst_g = _mm_and_si128(dst_g, _mm_set1_epi16(SK_G16_MASK));
+        dst_g = _mm_mullo_epi16(dst_g, dst_scale);
+        dst_g = _mm_add_epi16(dst_g, src_g_l);
+        dst_g = _mm_add_epi16(dst_g, v_128);
+        // add and shift
+        dst_g = _mm_add_epi16(dst_g, _mm_srli_epi16(dst_g, 8));
+        dst_g = _mm_srli_epi16(dst_g, 8);
+
+        // SkMulS16(SkPacked32ToB16(sc), alpha)
+        __m128i src_b_l = _mm_srli_epi32(src_pixel_l, 19);
+        __m128i src_b_h = _mm_srli_epi32(src_pixel_h, 19);
+        src_b_l = _mm_and_si128(src_b_l, _mm_set1_epi32(0x1F));
+        src_b_h = _mm_and_si128(src_b_h, _mm_set1_epi32(0x1F));
+        src_b_l = _mm_packs_epi32(src_b_l, src_b_h);
+        src_b_l = _mm_mullo_epi16(src_b_l, v_alpha);
+
+        // SkMulS16(SkGetPackedB16(dc), dst_scale);
+
+        __m128i dst_b = _mm_and_si128(dst_pixel, _mm_set1_epi16(SK_B16_MASK));
+        dst_b = _mm_mullo_epi16(dst_b, dst_scale);
+        dst_b = _mm_add_epi16(dst_b, src_b_l);
+        dst_b = _mm_add_epi16(dst_b, v_128);
+        // add and shift
+        dst_b = _mm_add_epi16(dst_b, _mm_srli_epi16(dst_b, 8));
+        dst_b = _mm_srli_epi16(dst_b, 8);
+
+        // *dst = SkPackRGB16(dr, dg, db);
+        dst_r = _mm_slli_epi16(dst_r, SK_R16_SHIFT);
+        dst_r = _mm_or_si128(dst_r, dst_b);
+        dst_g = _mm_slli_epi16(dst_g, SK_G16_SHIFT);
+        dst_r = _mm_or_si128(dst_r, dst_g);
+
+        _mm_storeu_si128((__m128i *)dst, dst_r);
+
+        dst += 8;
+        src += 8;
+        count -= 8;
+}
+
+    while (count-- > 0 )
+    {
+        SkPMColor sc = *src++;
+        if (sc) {
+            uint16_t dc = *dst;
+            unsigned dst_scale = 255 - SkMulDiv255Round(SkGetPackedA32(sc), alpha);
+            unsigned dr = SkMulS16(SkPacked32ToR16(sc), alpha)
+                    + SkMulS16(SkGetPackedR16(dc), dst_scale);
+            unsigned dg = SkMulS16(SkPacked32ToG16(sc), alpha)
+                    + SkMulS16(SkGetPackedG16(dc), dst_scale);
+            unsigned db = SkMulS16(SkPacked32ToB16(sc), alpha)
+                    + SkMulS16(SkGetPackedB16(dc), dst_scale);
+            *dst = SkPackRGB16(SkDiv255Round(dr), SkDiv255Round(dg), SkDiv255Round(db));
+        }
+        dst++;
+     }
+
+}
+
+/* SSE2 version of S32A_D565_Opaque()
+ * portable version is in core/SkBlitRow_D16.cpp
+ */
+
+void S32A_D565_Opaque_SSE2(uint16_t* SK_RESTRICT dst, const SkPMColor* SK_RESTRICT src,
+        int count, U8CPU alpha, int /*x*/, int /*y*/) {
+    while (((int)src & 0xf) && (count-- > 0)) {
+        *dst = SkSrcOver32To16(*src, *dst);
+        src++;
+        dst++;
+    }
+
+    while (count >= 8) {
+        __m128i src_pixel1 = _mm_load_si128((const __m128i*)(src));
+        __m128i src_pixel2 = _mm_load_si128((const __m128i*)(src + 4));
+
+        /* unpack src_r */
+        __m128i src_r1 = _mm_slli_epi32(src_pixel1, 24);
+        src_r1 = _mm_srli_epi32(src_r1, 24);
+        __m128i src_r2 = _mm_slli_epi32(src_pixel2, 24);
+        src_r2 = _mm_srli_epi32(src_r2, 24);
+        __m128i src_r = _mm_packs_epi32 (src_r1, src_r2);
+
+        /* unpack src_g */
+        __m128i src_g1 = _mm_slli_epi32(src_pixel1, 16);
+        src_g1 = _mm_srli_epi32(src_g1, 24);
+        __m128i src_g2 = _mm_slli_epi32(src_pixel2, 16);
+        src_g2 = _mm_srli_epi32(src_g2, 24);
+        __m128i src_g = _mm_packs_epi32 (src_g1, src_g2);
+
+        /* unpack src_b */
+        __m128i src_b1 = _mm_slli_epi32(src_pixel1, 8);
+        src_b1 = _mm_srli_epi32(src_b1, 24);
+        __m128i src_b2 = _mm_slli_epi32(src_pixel2, 8);
+        src_b2 = _mm_srli_epi32(src_b2, 24);
+        __m128i src_b = _mm_packs_epi32 (src_b1, src_b2);
+
+        /* compute isav */
+        __m128i isav1 = _mm_srli_epi32(src_pixel1, 24);
+        isav1 = _mm_sub_epi32(_mm_set1_epi32(255), isav1);
+        __m128i isav2 = _mm_srli_epi32(src_pixel2, 24);
+        isav2 = _mm_sub_epi32(_mm_set1_epi32(255), isav2);
+        __m128i isav = _mm_packs_epi32 (isav1, isav2);
+
+        __m128i dst_pixel = _mm_loadu_si128((__m128i *)dst);
+
+        // get dst red
+        __m128i dst_r = _mm_srli_epi16(dst_pixel, SK_R16_SHIFT);
+        dst_r = _mm_and_si128(dst_r, _mm_set1_epi16(SK_R16_MASK));
+
+        // get dst green
+        __m128i dst_g = _mm_srli_epi16(dst_pixel, SK_G16_SHIFT);
+        dst_g = _mm_and_si128(dst_g, _mm_set1_epi16(SK_G16_MASK));
+
+        // get dst blue
+        __m128i dst_b = _mm_srli_epi16(dst_pixel, SK_B16_SHIFT);
+        dst_b = _mm_and_si128(dst_b, _mm_set1_epi16(SK_B16_MASK));
+
+        // interleave blending of r,g,b
+        // dr = (sr + SkMul16ShiftRound(dr,isa,SK_R16_BITS)) >> (8 - SK_R16_BITS);
+        // dg = (sg + SkMul16ShiftRound(dg,isa,SK_G16_BITS)) >> (8 - SK_G16_BITS);
+        // db = (sb + SkMul16ShiftRound(db,isa,SK_B16_BITS)) >> (8 - SK_B16_BITS);
+
+        dst_r = _mm_mullo_epi16(dst_r, isav);
+        dst_g = _mm_mullo_epi16(dst_g, isav);
+        dst_b = _mm_mullo_epi16(dst_b, isav);
+
+        dst_r = _mm_add_epi16(dst_r, _mm_set1_epi16(1 << (SK_R16_BITS - 1)));
+        dst_g = _mm_add_epi16(dst_g, _mm_set1_epi16(1 << (SK_G16_BITS - 1)));
+        dst_b = _mm_add_epi16(dst_b, _mm_set1_epi16(1 << (SK_B16_BITS - 1)));
+        dst_r = _mm_add_epi16(dst_r, _mm_srli_epi16(dst_r, SK_R16_BITS));
+        dst_g = _mm_add_epi16(dst_g, _mm_srli_epi16(dst_g, SK_G16_BITS));
+        dst_r = _mm_srli_epi16(dst_r, SK_R16_BITS);
+
+        dst_b = _mm_add_epi16(dst_b, _mm_srli_epi16(dst_b, SK_B16_BITS));
+        dst_g = _mm_srli_epi16(dst_g, SK_G16_BITS);
+        dst_r = _mm_add_epi16(dst_r, src_r);
+
+        dst_b = _mm_srli_epi16(dst_b, SK_B16_BITS);
+        dst_g = _mm_add_epi16(dst_g, src_g);
+
+        dst_r = _mm_srli_epi16(dst_r, (8 - SK_R16_BITS));
+        dst_b = _mm_add_epi16(dst_b, src_b);
+        dst_g = _mm_srli_epi16(dst_g, (8 - SK_G16_BITS));
+        dst_b = _mm_srli_epi16(dst_b, (8 - SK_B16_BITS));
+
+        // *dst = SkPackRGB16(dr, dg, db);
+        // SkToU16((r << SK_R16_SHIFT) | (g << SK_G16_SHIFT) | (b << SK_B16_SHIFT)
+        dst_r = _mm_slli_epi16(dst_r, SK_R16_SHIFT);
+        dst_g = _mm_slli_epi16(dst_g, SK_G16_SHIFT);
+        dst_r = _mm_or_si128(dst_r, dst_g);
+        dst_b = _mm_slli_epi16(dst_b, SK_B16_SHIFT);
+        dst_r = _mm_or_si128(dst_r, dst_b);
+
+        _mm_storeu_si128((__m128i *)dst, dst_r);
+
+        dst += 8;
+        src += 8;
+        count -= 8;
+    }
+
+    while (count-- > 0) {
+        *dst = SkSrcOver32To16(*src, *dst);
+        src++;
+        dst++;
+    }
+}
+
+/* SSE2 version of S32A_D565_Opaque_Dither()
+ * portable version is in core/SkBlitRow_D16.cpp
+ */
+
+void S32A_D565_Opaque_Dither_SSE2(uint16_t* __restrict__ dst, const SkPMColor* __restrict__ src,
+        int count, U8CPU alpha, int x, int y)
+{
+
+#ifdef ENABLE_DITHER_MATRIX_4X4
+    const uint8_t* dither_scan = gDitherMatrix_3Bit_4X4[(y) & 3];
+#else
+    uint16_t dither_scan = gDitherMatrix_3Bit_16[(y) & 3];
+#endif
+
+    __m128i dither_v, dither_p, maskFF;
+    unsigned short dither_temp[4];
+
+    // if we are using SIMD, load dither_scan (or precursor) into 8 ints
+    if (count >= 8) {
+
+#ifdef ENABLE_DITHER_MATRIX_4X4
+    // #define DITHER_VALUE(x) dither_scan[(x) & 3]
+        dither_temp[0] = dither_scan[x & 3];
+        dither_temp[1] = dither_scan[x+1 & 3];
+        dither_temp[2] = dither_scan[x+2 & 3];
+        dither_temp[3] = dither_scan[x+3 & 3];
+        dither_p = _mm_loadl_epi64((__m128i *) dither_temp);
+        dither_p = _mm_shuffle_epi32(dither_p, 0x44);
+#else
+        dither_temp[0] = ((dither_scan >> ((x & 3) << 2)) & 0xF);
+        dither_temp[1] = ((dither_scan >> (((x+1) & 3) << 2)) & 0xF);
+        dither_temp[2] = ((dither_scan >> (((x+2) & 3) << 2)) & 0xF);
+        dither_temp[3] = ((dither_scan >> (((x+3) & 3) << 2)) & 0xF);
+        dither_p = _mm_loadl_epi64((__m128i *) dither_temp);
+        dither_p = _mm_shuffle_epi32(dither_p, 0x44);
+#endif
+         maskFF = _mm_set1_epi32(0xFF);
+     }
+
+    while (count >= 8) {
+
+        __m128i src_pixel_l = _mm_loadu_si128((const __m128i*)(src));
+        __m128i src_pixel_h = _mm_loadu_si128((const __m128i*)(src+4));
+
+        __m128i alpha_v = _mm_srli_epi32(src_pixel_l, 24);
+        alpha_v = _mm_packs_epi32(alpha_v, _mm_srli_epi32(src_pixel_h, 24));
+
+        dither_v = _mm_mullo_epi16(dither_p, _mm_add_epi16(alpha_v, _mm_set1_epi16(1)));
+        dither_v = _mm_srli_epi16(dither_v, 8);
+
+        // sr = (sr + d - (sr >> 5))
+        __m128i src_r_l = _mm_and_si128(src_pixel_l, maskFF);
+        __m128i src_r_h = _mm_and_si128(src_pixel_h, maskFF);
+        src_r_l = _mm_packs_epi32(src_r_l, src_r_h);
+
+        __m128i srvs = _mm_srli_epi16(src_r_l, 5);
+        src_r_l = _mm_add_epi16(src_r_l, dither_v);
+        src_r_l = _mm_sub_epi16(src_r_l, srvs);
+        src_r_l = _mm_slli_epi16(src_r_l, 2);
+
+        // sg = (sg + (d >> 1) - (sg >> 6))
+        __m128i src_g_l = _mm_srli_epi32(src_pixel_l, 8);
+        src_g_l = _mm_and_si128(src_g_l, maskFF);
+        __m128i src_g_h = _mm_srli_epi32(src_pixel_h, 8);
+        src_g_h = _mm_and_si128(src_g_h, maskFF);
+        src_g_l = _mm_packs_epi32(src_g_l, src_g_h);
+
+        __m128i sgvs = _mm_srli_epi16(src_g_l, 6);
+        src_g_l = _mm_add_epi16(src_g_l,_mm_srli_epi16(dither_v, 1));
+        src_g_l = _mm_sub_epi16(src_g_l, sgvs);
+        src_g_l = _mm_slli_epi16(src_g_l, 3);
+
+        // sb = (sb + d - (sb >> 5))
+        __m128i src_b_l = _mm_srli_epi32(src_pixel_l, 16);
+        src_b_l = _mm_and_si128(src_b_l, maskFF);
+        __m128i src_b_h = _mm_srli_epi32(src_pixel_h, 16);
+        src_b_h = _mm_and_si128(src_b_h, maskFF);
+        src_b_l = _mm_packs_epi32(src_b_l, src_b_h);
+
+        __m128i sbvs = _mm_srli_epi16(src_b_l, 5);
+        src_b_l = _mm_add_epi16(src_b_l, dither_v);
+        src_b_l = _mm_sub_epi16(src_b_l, sbvs);
+        src_b_l = _mm_slli_epi16(src_b_l, 2);
+
+        // unpack dst
+        __m128i dst_pixel = _mm_loadu_si128((__m128i *)dst);
+
+        // get dst red
+        __m128i dst_r = _mm_srli_epi16(dst_pixel, SK_R16_SHIFT);
+        dst_r = _mm_and_si128(dst_r, _mm_set1_epi16(SK_R16_MASK));
+
+        // get dst green
+        __m128i dst_g = _mm_srli_epi16(dst_pixel, SK_G16_SHIFT);
+        dst_g = _mm_and_si128(dst_g, _mm_set1_epi16(SK_G16_MASK));
+
+        // get dst blue
+        __m128i dst_b = _mm_and_si128(dst_pixel, _mm_set1_epi16(SK_R16_MASK));
+
+        // dst_expanded = dst_expanded * (SkAlpha255To256(255 - a) >> 3)
+        __m128i avtemp = _mm_sub_epi16(_mm_set1_epi16(256), alpha_v);
+        avtemp = _mm_srli_epi16(avtemp, 3);
+
+        dst_r = _mm_mullo_epi16(dst_r, avtemp);
+        dst_g = _mm_mullo_epi16(dst_g, avtemp);
+        dst_b = _mm_mullo_epi16(dst_b, avtemp);
+
+        // *dst = SkCompact_rgb_16((src_expanded + dst_expanded) >> 5)
+        // (src_expanded + dst_expanded) >> 5
+
+        dst_r = _mm_add_epi16(dst_r, src_r_l);
+        dst_r = _mm_srli_epi16(dst_r, 5);
+
+        dst_g = _mm_add_epi16(dst_g, src_g_l);
+        dst_g = _mm_srli_epi16(dst_g, 5);
+
+        dst_b = _mm_add_epi16(dst_b, src_b_l);
+        dst_b = _mm_srli_epi16(dst_b, 5);
+
+        dst_r = _mm_slli_epi16(dst_r, SK_R16_SHIFT);
+        dst_g = _mm_slli_epi16(dst_g, SK_G16_SHIFT);
+        dst_r = _mm_or_si128(dst_r, dst_g);
+        dst_r = _mm_or_si128(dst_r, dst_b);
+
+        _mm_storeu_si128((__m128i *)dst, dst_r);
+
+        src += 8;
+        dst += 8;
+        x += 8;
+        count -= 8;
+    }
+
+        if (count > 0) {
+        DITHER_565_SCAN(y);
+        do {
+            SkPMColor c = *src++;
+            SkPMColorAssert(c);
+            if (c) {
+                unsigned a = SkGetPackedA32(c);
+                int d = SkAlphaMul(DITHER_VALUE(x), SkAlpha255To256(a));
+                unsigned sr = SkGetPackedR32(c);
+                unsigned sg = SkGetPackedG32(c);
+                unsigned sb = SkGetPackedB32(c);
+                sr = SkDITHER_R32_FOR_565(sr, d);
+                sg = SkDITHER_G32_FOR_565(sg, d);
+                sb = SkDITHER_B32_FOR_565(sb, d);
+
+                uint32_t src_expanded = (sg << 24) | (sr << 13) | (sb << 2);
+                uint32_t dst_expanded = SkExpand_rgb_16(*dst);
+                dst_expanded = dst_expanded * (SkAlpha255To256(255 - a) >> 3);
+                // now src and dst expanded are in g:11 r:10 x:1 b:10
+                *dst = SkCompact_rgb_16((src_expanded + dst_expanded) >> 5);
+            }
+            dst += 1;
+            DITHER_INC_X(x);
+        } while (--count != 0);
+    }
+}
+
+/* SSE2 version of S32_D565_Opaque()
+ * portable version is in core/SkBlitRow_D16.cpp
+ */
+
+void S32_D565_Opaque_SSE2(uint16_t* __restrict__ dst, const SkPMColor* __restrict__ src,
+        int count, U8CPU alpha, int x, int y)
+{
+
+    __m128i mask_RB, mask_G;
+
+    if (count >= 8) {
+         mask_RB = _mm_set1_epi32(0x1F);
+         mask_G  = _mm_set1_epi32(0x3F);
+     }
+
+    while (count >= 8) {
+
+        __m128i src_pixel_l = _mm_loadu_si128((const __m128i*)(src));
+        __m128i src_pixel_h = _mm_loadu_si128((const __m128i*)(src+4));
+
+        __m128i src_r_l = _mm_srli_epi32(src_pixel_l, 3);
+        src_r_l = _mm_and_si128(src_r_l, mask_RB);
+        __m128i src_r_h = _mm_srli_epi32(src_pixel_h, 3);
+        src_r_h = _mm_and_si128(src_r_h, mask_RB);
+        src_r_l = _mm_packs_epi32(src_r_l, src_r_h);
+
+        __m128i src_g_l = _mm_srli_epi32(src_pixel_l, 10);
+        src_g_l = _mm_and_si128(src_g_l, mask_G);
+        __m128i src_g_h = _mm_srli_epi32(src_pixel_h, 10);
+        src_g_h = _mm_and_si128(src_g_h, mask_G);
+        src_g_l = _mm_packs_epi32(src_g_l, src_g_h);
+
+        __m128i src_b_l = _mm_srli_epi32(src_pixel_l, 19);
+        src_b_l = _mm_and_si128(src_b_l, mask_RB);
+        __m128i src_b_h = _mm_srli_epi32(src_pixel_h, 19);
+        src_b_h = _mm_and_si128(src_b_h, mask_RB);
+        src_b_l = _mm_packs_epi32(src_b_l, src_b_h);
+
+        src_r_l = _mm_slli_epi16(src_r_l, SK_R16_SHIFT);
+        src_g_l = _mm_slli_epi16(src_g_l, SK_G16_SHIFT);
+        src_r_l = _mm_or_si128(src_r_l, src_g_l);
+        src_r_l = _mm_or_si128(src_r_l, src_b_l);
+
+        _mm_storeu_si128((__m128i *)dst, src_r_l);
+
+        src += 8;
+        dst += 8;
+        count -= 8;
+    }
+
+    if (count > 0) {
+        do {
+            SkPMColor c = *src++;
+            SkPMColorAssert(c);
+            SkASSERT(SkGetPackedA32(c) == 255);
+            *dst++ = SkPixel32ToPixel16_ToU16(c);
+        } while (--count != 0);
+    }
+}
+
+/* SSE2 version of S32_D565_Blend()
+ * portable version is in core/SkBlitRow_D16.cpp
+ */
+
+void S32_D565_Blend_SSE2(uint16_t* __restrict__ dst, const SkPMColor* __restrict__ src,
+        int count, U8CPU alpha, int x, int y)
+{
+
+    __m128i alpha_scale, mask_RB, mask_G;
+
+    if (count >= 8) {
+         alpha_scale = _mm_set1_epi16(SkAlpha255To256(alpha));
+         mask_RB = _mm_set1_epi32(0x1F);
+         mask_G  = _mm_set1_epi32(0x3F);
+     }
+
+    while (count >= 8) {
+
+        __m128i src_pixel_l = _mm_loadu_si128((const __m128i*)(src));
+        __m128i src_pixel_h = _mm_loadu_si128((const __m128i*)(src+4));
+
+        __m128i src_r_l = _mm_srli_epi32(src_pixel_l, 3);
+        src_r_l = _mm_and_si128(src_r_l, mask_RB);
+        __m128i src_r_h = _mm_srli_epi32(src_pixel_h, 3);
+        src_r_h = _mm_and_si128(src_r_h, mask_RB);
+        src_r_l = _mm_packs_epi32(src_r_l, src_r_h);
+
+        __m128i src_g_l = _mm_srli_epi32(src_pixel_l, 10);
+        src_g_l = _mm_and_si128(src_g_l, mask_G);
+        __m128i src_g_h = _mm_srli_epi32(src_pixel_h, 10);
+        src_g_h = _mm_and_si128(src_g_h, mask_G);
+        src_g_l = _mm_packs_epi32(src_g_l, src_g_h);
+
+        __m128i src_b_l = _mm_srli_epi32(src_pixel_l, 19);
+        src_b_l = _mm_and_si128(src_b_l, mask_RB);
+        __m128i src_b_h = _mm_srli_epi32(src_pixel_h, 19);
+        src_b_h = _mm_and_si128(src_b_h, mask_RB);
+        src_b_l = _mm_packs_epi32(src_b_l, src_b_h);
+
+        __m128i dst_pixel = _mm_loadu_si128((__m128i *)dst);
+        __m128i dst_r = _mm_srli_epi16(dst_pixel, SK_R16_SHIFT);
+        src_r_l = _mm_sub_epi16(src_r_l, dst_r);
+        src_r_l = _mm_mullo_epi16(src_r_l, alpha_scale);
+        src_r_l = _mm_srli_epi16(src_r_l, 8);
+        src_r_l = _mm_add_epi16(src_r_l, dst_r);
+        src_r_l = _mm_and_si128(src_r_l, _mm_set1_epi16(SK_R16_MASK));
+
+        __m128i dst_g = _mm_srli_epi16(dst_pixel, SK_G16_SHIFT);
+        dst_g = _mm_and_si128(dst_g, _mm_set1_epi16(SK_G16_MASK));
+        src_g_l = _mm_sub_epi16(src_g_l, dst_g);
+        src_g_l = _mm_mullo_epi16(src_g_l, alpha_scale);
+        src_g_l = _mm_srli_epi16(src_g_l, 8);
+        src_g_l = _mm_add_epi16(src_g_l, dst_g);
+        src_g_l = _mm_and_si128(src_g_l, _mm_set1_epi16(SK_G16_MASK));
+
+        __m128i dst_b = _mm_and_si128(dst_pixel, _mm_set1_epi16(SK_B16_MASK));
+        src_b_l = _mm_sub_epi16(src_b_l, dst_b);
+        src_b_l = _mm_mullo_epi16(src_b_l, alpha_scale);
+        src_b_l = _mm_srli_epi16(src_b_l, 8);
+        src_b_l = _mm_add_epi16(src_b_l, dst_b);
+        src_b_l = _mm_and_si128(src_b_l, _mm_set1_epi16(SK_B16_MASK));
+
+        src_r_l = _mm_slli_epi16(src_r_l, SK_R16_SHIFT);
+        src_g_l = _mm_slli_epi16(src_g_l, SK_G16_SHIFT);
+        src_r_l = _mm_or_si128(src_r_l, src_g_l);
+        src_r_l = _mm_or_si128(src_r_l, src_b_l);
+
+        _mm_storeu_si128((__m128i *)dst, src_r_l);
+
+        src += 8;
+        dst += 8;
+        count -= 8;
+    }
+
+
+    if (count > 0) {
+        int scale = SkAlpha255To256(alpha);
+        do {
+            SkPMColor c = *src++;
+            SkPMColorAssert(c);
+            SkASSERT(SkGetPackedA32(c) == 255);
+            uint16_t d = *dst;
+            *dst++ = SkPackRGB16(
+                    SkAlphaBlend(SkPacked32ToR16(c), SkGetPackedR16(d), scale),
+                    SkAlphaBlend(SkPacked32ToG16(c), SkGetPackedG16(d), scale),
+                    SkAlphaBlend(SkPacked32ToB16(c), SkGetPackedB16(d), scale));
+        } while (--count != 0);
+    }
+}
+
+/* SSE2 version of S32_D565_Opaque_Dither()
+ * portable version is in core/SkBlitRow_D16.cpp
+ */
+
+void S32_D565_Opaque_Dither_SSE2(uint16_t* __restrict__ dst, const SkPMColor* __restrict__ src,
+        int count, U8CPU alpha, int x, int y)
+{
+#ifdef ENABLE_DITHER_MATRIX_4X4
+    const uint8_t* dither_scan = gDitherMatrix_3Bit_4X4[(y) & 3];
+#else
+    uint16_t dither_scan = gDitherMatrix_3Bit_16[(y) & 3];
+#endif
+
+    __m128i dither_v, maskFF;
+    unsigned short dither_temp[4];
+
+    // if we are using SIMD, load dither_scan (or precursor) into 8 ints
+    if (count >= 8) {
+
+#ifdef ENABLE_DITHER_MATRIX_4X4
+    // #define DITHER_VALUE(x) dither_scan[(x) & 3]
+        dither_temp[0] = dither_scan[x & 3];
+        dither_temp[1] = dither_scan[x+1 & 3];
+        dither_temp[2] = dither_scan[x+2 & 3];
+        dither_temp[3] = dither_scan[x+3 & 3];
+        dither_v = _mm_loadl_epi64((__m128i *) dither_temp);
+        dither_v = _mm_shuffle_epi32(dither_v, 0x44);
+#else
+        dither_temp[0] = ((dither_scan >> ((x & 3) << 2)) & 0xF);
+        dither_temp[1] = ((dither_scan >> (((x+1) & 3) << 2)) & 0xF);
+        dither_temp[2] = ((dither_scan >> (((x+2) & 3) << 2)) & 0xF);
+        dither_temp[3] = ((dither_scan >> (((x+3) & 3) << 2)) & 0xF);
+        dither_v = _mm_loadl_epi64((__m128i *) dither_temp);
+        dither_v = _mm_shuffle_epi32(dither_v, 0x44);
+#endif
+         maskFF = _mm_set1_epi32(0xFF);
+     }
+
+    while (count >= 8) {
+
+        __m128i src_pixel_l = _mm_loadu_si128((const __m128i*)(src));
+        __m128i src_pixel_h = _mm_loadu_si128((const __m128i*)(src+4));
+
+        // sr = (sr + d - (sr >> 5))
+        __m128i src_r_l = _mm_and_si128(src_pixel_l, maskFF);
+        __m128i src_r_h = _mm_and_si128(src_pixel_h, maskFF);
+        src_r_l = _mm_packs_epi32(src_r_l, src_r_h);
+
+        __m128i srvs = _mm_srli_epi16(src_r_l, 5);
+        src_r_l = _mm_add_epi16(src_r_l, dither_v);
+        src_r_l = _mm_sub_epi16(src_r_l, srvs);
+        src_r_l = _mm_srli_epi16(src_r_l, 3);
+
+        // sg = (sg + (d >> 1) - (sg >> 6))
+        __m128i src_g_l = _mm_srli_epi32(src_pixel_l, 8);
+        src_g_l = _mm_and_si128(src_g_l, maskFF);
+        __m128i src_g_h = _mm_srli_epi32(src_pixel_h, 8);
+        src_g_h = _mm_and_si128(src_g_h, maskFF);
+        src_g_l = _mm_packs_epi32(src_g_l, src_g_h);
+
+        __m128i sgvs = _mm_srli_epi16(src_g_l, 6);
+        src_g_l = _mm_add_epi16(src_g_l,_mm_srli_epi16(dither_v, 1));
+        src_g_l = _mm_sub_epi16(src_g_l, sgvs);
+        src_g_l = _mm_srli_epi16(src_g_l, 2);
+
+        // sb = (sb + d - (sb >> 5))
+        __m128i src_b_l = _mm_srli_epi32(src_pixel_l, 16);
+        src_b_l = _mm_and_si128(src_b_l, maskFF);
+        __m128i src_b_h = _mm_srli_epi32(src_pixel_h, 16);
+        src_b_h = _mm_and_si128(src_b_h, maskFF);
+        src_b_l = _mm_packs_epi32(src_b_l, src_b_h);
+
+        __m128i sbvs = _mm_srli_epi16(src_b_l, 5);
+        src_b_l = _mm_add_epi16(src_b_l, dither_v);
+        src_b_l = _mm_sub_epi16(src_b_l, sbvs);
+        src_b_l = _mm_srli_epi16(src_b_l, 3);
+
+        src_r_l = _mm_slli_epi16(src_r_l, SK_R16_SHIFT);
+        src_g_l = _mm_slli_epi16(src_g_l, SK_G16_SHIFT);
+        src_r_l = _mm_or_si128(src_r_l, src_g_l);
+        src_r_l = _mm_or_si128(src_r_l, src_b_l);
+
+        _mm_storeu_si128((__m128i *)dst, src_r_l);
+
+        src += 8;
+        dst += 8;
+        x += 8;
+        count -= 8;
+    }
+
+    if (count > 0) {
+        DITHER_565_SCAN(y);
+        do {
+            SkPMColor c = *src++;
+            SkPMColorAssert(c);
+            SkASSERT(SkGetPackedA32(c) == 255);
+
+            unsigned dither = DITHER_VALUE(x);
+            *dst++ = SkDitherRGB32To565(c, dither);
+            DITHER_INC_X(x);
+        } while (--count != 0);
+    }
+}
+
+/* SSE2 version of S32_D565_Blend_Dither()
+ * portable version is in core/SkBlitRow_D16.cpp
+ */
+
+void S32_D565_Blend_Dither_SSE2(uint16_t* __restrict__ dst, const SkPMColor* __restrict__ src,
+        int count, U8CPU alpha, int x, int y)
+{
+#ifdef ENABLE_DITHER_MATRIX_4X4
+    const uint8_t* dither_scan = gDitherMatrix_3Bit_4X4[(y) & 3];
+#else
+    uint16_t dither_scan = gDitherMatrix_3Bit_16[(y) & 3];
+#endif
+
+    __m128i dither_v, maskFF, alpha_scale;
+    unsigned short dither_temp[4];
+
+    // if we are using SIMD, load dither_scan (or precursor) into 8 ints
+    if (count >= 8) {
+
+#ifdef ENABLE_DITHER_MATRIX_4X4
+    // #define DITHER_VALUE(x) dither_scan[(x) & 3]
+        dither_temp[0] = dither_scan[x & 3];
+        dither_temp[1] = dither_scan[x+1 & 3];
+        dither_temp[2] = dither_scan[x+2 & 3];
+        dither_temp[3] = dither_scan[x+3 & 3];
+        dither_v = _mm_loadl_epi64((__m128i *) dither_temp);
+        dither_v = _mm_shuffle_epi32(dither_v, 0x44);
+#else
+        dither_temp[0] = ((dither_scan >> ((x & 3) << 2)) & 0xF);
+        dither_temp[1] = ((dither_scan >> (((x+1) & 3) << 2)) & 0xF);
+        dither_temp[2] = ((dither_scan >> (((x+2) & 3) << 2)) & 0xF);
+        dither_temp[3] = ((dither_scan >> (((x+3) & 3) << 2)) & 0xF);
+        dither_v = _mm_loadl_epi64((__m128i *) dither_temp);
+        dither_v = _mm_shuffle_epi32(dither_v, 0x44);
+#endif
+         maskFF = _mm_set1_epi32(0xFF);
+         alpha_scale = _mm_set1_epi16(SkAlpha255To256(alpha));
+     }
+
+    while (count >= 8) {
+
+        __m128i src_pixel_l = _mm_loadu_si128((const __m128i*)(src));
+        __m128i src_pixel_h = _mm_loadu_si128((const __m128i*)(src+4));
+
+        // sr = (sr + d - (sr >> 5))
+        __m128i src_r_l = _mm_and_si128(src_pixel_l, maskFF);
+        __m128i src_r_h = _mm_and_si128(src_pixel_h, maskFF);
+        src_r_l = _mm_packs_epi32(src_r_l, src_r_h);
+
+        __m128i srvs = _mm_srli_epi16(src_r_l, 5);
+        src_r_l = _mm_add_epi16(src_r_l, dither_v);
+        src_r_l = _mm_sub_epi16(src_r_l, srvs);
+        src_r_l = _mm_srli_epi16(src_r_l, 3);
+
+        // sg = (sg + (d >> 1) - (sg >> 6))
+        __m128i src_g_l = _mm_srli_epi32(src_pixel_l, 8);
+        src_g_l = _mm_and_si128(src_g_l, maskFF);
+        __m128i src_g_h = _mm_srli_epi32(src_pixel_h, 8);
+        src_g_h = _mm_and_si128(src_g_h, maskFF);
+        src_g_l = _mm_packs_epi32(src_g_l, src_g_h);
+
+        __m128i sgvs = _mm_srli_epi16(src_g_l, 6);
+        src_g_l = _mm_add_epi16(src_g_l,_mm_srli_epi16(dither_v, 1));
+        src_g_l = _mm_sub_epi16(src_g_l, sgvs);
+        src_g_l = _mm_srli_epi16(src_g_l, 2);
+
+        // sb = (sb + d - (sb >> 5))
+        __m128i src_b_l = _mm_srli_epi32(src_pixel_l, 16);
+        src_b_l = _mm_and_si128(src_b_l, maskFF);
+        __m128i src_b_h = _mm_srli_epi32(src_pixel_h, 16);
+        src_b_h = _mm_and_si128(src_b_h, maskFF);
+        src_b_l = _mm_packs_epi32(src_b_l, src_b_h);
+
+        __m128i sbvs = _mm_srli_epi16(src_b_l, 5);
+        src_b_l = _mm_add_epi16(src_b_l, dither_v);
+        src_b_l = _mm_sub_epi16(src_b_l, sbvs);
+        src_b_l = _mm_srli_epi16(src_b_l, 3);
+
+        __m128i dst_pixel = _mm_loadu_si128((__m128i *)dst);
+        __m128i dst_r = _mm_srli_epi16(dst_pixel, SK_R16_SHIFT);
+        src_r_l = _mm_sub_epi16(src_r_l, dst_r);
+        src_r_l = _mm_mullo_epi16(src_r_l, alpha_scale);
+        src_r_l = _mm_srli_epi16(src_r_l, 8);
+        src_r_l = _mm_add_epi16(src_r_l, dst_r);
+        src_r_l = _mm_and_si128(src_r_l, _mm_set1_epi16(SK_R16_MASK));
+
+        __m128i dst_g = _mm_srli_epi16(dst_pixel, SK_G16_SHIFT);
+        dst_g = _mm_and_si128(dst_g, _mm_set1_epi16(SK_G16_MASK));
+        src_g_l = _mm_sub_epi16(src_g_l, dst_g);
+        src_g_l = _mm_mullo_epi16(src_g_l, alpha_scale);
+        src_g_l = _mm_srli_epi16(src_g_l, 8);
+        src_g_l = _mm_add_epi16(src_g_l, dst_g);
+        src_g_l = _mm_and_si128(src_g_l, _mm_set1_epi16(SK_G16_MASK));
+
+        __m128i dst_b = _mm_and_si128(dst_pixel, _mm_set1_epi16(SK_B16_MASK));
+        src_b_l = _mm_sub_epi16(src_b_l, dst_b);
+        src_b_l = _mm_mullo_epi16(src_b_l, alpha_scale);
+        src_b_l = _mm_srli_epi16(src_b_l, 8);
+        src_b_l = _mm_add_epi16(src_b_l, dst_b);
+        src_b_l = _mm_and_si128(src_b_l, _mm_set1_epi16(SK_B16_MASK));
+
+        src_r_l = _mm_slli_epi16(src_r_l, SK_R16_SHIFT);
+        src_g_l = _mm_slli_epi16(src_g_l, SK_G16_SHIFT);
+        src_r_l = _mm_or_si128(src_r_l, src_g_l);
+        src_r_l = _mm_or_si128(src_r_l, src_b_l);
+
+        _mm_storeu_si128((__m128i *)dst, src_r_l);
+
+        src += 8;
+        dst += 8;
+        x += 8;
+        count -= 8;
+    }
+
+    if (count > 0) {
+        int scale = SkAlpha255To256(alpha);
+        DITHER_565_SCAN(y);
+        do {
+            SkPMColor c = *src++;
+            SkPMColorAssert(c);
+            SkASSERT(SkGetPackedA32(c) == 255);
+
+            int dither = DITHER_VALUE(x);
+            int sr = SkGetPackedR32(c);
+            int sg = SkGetPackedG32(c);
+            int sb = SkGetPackedB32(c);
+            sr = SkDITHER_R32To565(sr, dither);
+            sg = SkDITHER_G32To565(sg, dither);
+            sb = SkDITHER_B32To565(sb, dither);
+
+            uint16_t d = *dst;
+            *dst++ = SkPackRGB16(SkAlphaBlend(sr, SkGetPackedR16(d), scale),
+                                 SkAlphaBlend(sg, SkGetPackedG16(d), scale),
+                                 SkAlphaBlend(sb, SkGetPackedB16(d), scale));
+            DITHER_INC_X(x);
+        } while (--count != 0);
     }
 }

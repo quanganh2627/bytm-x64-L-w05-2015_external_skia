@@ -11,8 +11,8 @@
 #include "GrMemoryPool.h"
 #include "SkBenchmark.h"
 #include "SkRandom.h"
-#include "SkTScopedPtr.h"
 #include "SkTDArray.h"
+#include "SkTemplates.h"
 
 // change this to 0 to compare GrMemoryPool to default new / delete
 #define OVERRIDE_NEW    1
@@ -46,7 +46,7 @@ protected:
         return "grmemorypool_stack";
     }
 
-    virtual void onDraw(SkCanvas* canvas) {
+    virtual void onDraw(SkCanvas*) {
         SkRandom r;
         enum {
             kMaxObjects = 4 * (1 << 10),
@@ -102,19 +102,19 @@ protected:
         return "grmemorypool_random";
     }
 
-    virtual void onDraw(SkCanvas* canvas) {
+    virtual void onDraw(SkCanvas*) {
         SkRandom r;
         enum {
             kMaxObjects = 4 * (1 << 10),
         };
-        SkTScopedPtr<A> objects[kMaxObjects];
+        SkAutoTDelete<A> objects[kMaxObjects];
 
         for (int i = 0; i < N; i++) {
             uint32_t idx = r.nextRangeU(0, kMaxObjects-1);
             if (NULL == objects[idx].get()) {
                 objects[idx].reset(new A);
             } else {
-                objects[idx].reset(NULL);
+                objects[idx].free();
             }
         }
     }
@@ -140,7 +140,7 @@ protected:
         return "grmemorypool_queue";
     }
 
-    virtual void onDraw(SkCanvas* canvas) {
+    virtual void onDraw(SkCanvas*) {
         SkRandom r;
         A* objects[M];
         for (int i = 0; i < N; i++) {

@@ -1,11 +1,9 @@
-
 /*
  * Copyright 2010 Google Inc.
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
-
 
 #ifndef GrContext_DEFINED
 #define GrContext_DEFINED
@@ -16,8 +14,7 @@
 #include "SkMatrix.h"
 #include "GrPaint.h"
 #include "GrPathRendererChain.h"
-// not strictly needed but requires WK change in LayerTextureUpdaterCanvas to
-// remove.
+#include "GrPoint.h"
 #include "GrRenderTarget.h"
 #include "GrRefCnt.h"
 #include "GrTexture.h"
@@ -31,6 +28,7 @@ class GrGpu;
 class GrIndexBuffer;
 class GrIndexBufferAllocPool;
 class GrInOrderDrawBuffer;
+class GrOvalRenderer;
 class GrPathRenderer;
 class GrResourceEntry;
 class GrResourceCache;
@@ -62,8 +60,10 @@ public:
      * within the underlying 3D API's context/device/whatever. This call informs
      * the context that the state was modified and it should resend. Shouldn't
      * be called frequently for good performance.
+     * The flag bits, state, is dpendent on which backend is used by the
+     * context, either GL or D3D (possible in future).
      */
-    void resetContext();
+    void resetContext(uint32_t state = kAll_GrBackendState);
 
     /**
      * Callback function to allow classes to cleanup on GrContext destruction.
@@ -254,26 +254,31 @@ public:
     int getMaxTextureSize() const;
 
     /**
-     * Return the max width or height of a render target supported by the
-     * current GPU.
+     *  Temporarily override the true max texture size. Note: an override
+     *  larger then the true max texture size will have no effect.
+     *  This entry point is mainly meant for testing texture size dependent
+     *  features and is only available if defined outside of Skia (see
+     *  bleed GM.
      */
-    int getMaxRenderTargetSize() const;
+    void setMaxTextureSizeOverride(int maxTextureSizeOverride);
 
     ///////////////////////////////////////////////////////////////////////////
     // Render targets
 
     /**
      * Sets the render target.
-     * @param target    the render target to set. (should not be NULL.)
+     * @param target    the render target to set.
      */
-    void setRenderTarget(GrRenderTarget* target);
+    void setRenderTarget(GrRenderTarget* target) {
+        fRenderTarget.reset(SkSafeRef(target));
+    }
 
     /**
      * Gets the current render target.
-     * @return the currently bound render target. Should never be NULL.
+     * @return the currently bound render target.
      */
-    const GrRenderTarget* getRenderTarget() const;
-    GrRenderTarget* getRenderTarget();
+    const GrRenderTarget* getRenderTarget() const { return fRenderTarget.get(); }
+    GrRenderTarget* getRenderTarget() { return fRenderTarget.get(); }
 
     GrAARectRenderer* getAARectRenderer() { return fAARectRenderer; }
 
@@ -281,6 +286,18 @@ public:
      * Can the provided configuration act as a color render target?
      */
     bool isConfigRenderable(GrPixelConfig config) const;
+
+    /**
+     * Return the max width or height of a render target supported by the
+     * current GPU.
+     */
+    int getMaxRenderTargetSize() const;
+
+    /**
+     * Returns the max sample count for a render target. It will be 0 if MSAA
+     * is not supported.
+     */
+    int getMaxSampleCount() const;
 
     ///////////////////////////////////////////////////////////////////////////
     // Backend Surfaces
@@ -316,25 +333,25 @@ public:
      * Gets the current transformation matrix.
      * @return the current matrix.
      */
-    const SkMatrix& getMatrix() const;
+    const SkMatrix& getMatrix() const { return fViewMatrix; }
 
     /**
      * Sets the transformation matrix.
      * @param m the matrix to set.
      */
-    void setMatrix(const SkMatrix& m);
+    void setMatrix(const SkMatrix& m) { fViewMatrix = m; }
 
     /**
      * Sets the current transformation matrix to identity.
      */
-    void setIdentityMatrix();
+    void setIdentityMatrix() { fViewMatrix.reset(); }
 
     /**
      * Concats the current matrix. The passed matrix is applied before the
      * current matrix.
      * @param m the matrix to concat.
      */
-    void concatMatrix(const SkMatrix& m) const;
+    void concatMatrix(const SkMatrix& m) { fViewMatrix.preConcat(m); }
 
 
     ///////////////////////////////////////////////////////////////////////////
@@ -343,13 +360,13 @@ public:
      * Gets the current clip.
      * @return the current clip.
      */
-    const GrClipData* getClip() const;
+    const GrClipData* getClip() const { return fClip; }
 
     /**
      * Sets the clip.
      * @param clipData  the clip to set.
      */
-    void setClip(const GrClipData* clipData);
+    void setClip(const GrClipData* clipData) { fClip = clipData; }
 
     ///////////////////////////////////////////////////////////////////////////
     // Draws
@@ -361,7 +378,7 @@ public:
      * @param target if non-NULL, the render target to clear otherwise clear
      *               the current render target
      */
-    void clear(const GrIRect* rect, GrColor color,
+    void clear(const SkIRect* rect, GrColor color,
                GrRenderTarget* target = NULL);
 
     /**
@@ -381,30 +398,39 @@ public:
      *  The rects coords are used to access the paint (through texture matrix)
      */
     void drawRect(const GrPaint& paint,
-                  const GrRect&,
+                  const SkRect&,
                   SkScalar strokeWidth = -1,
                   const SkMatrix* matrix = NULL);
 
     /**
-     * Maps a rect of paint coordinates onto the a rect of destination
-     * coordinates. Each rect can optionally be transformed. The srcRect
+     * Maps a rect of local coordinates onto the a rect of destination
+     * coordinates. Each rect can optionally be transformed. The localRect
      * is stretched over the dstRect. The dstRect is transformed by the
-     * context's matrix and the srcRect is transformed by the paint's matrix.
-     * Additional optional matrices can be provided by parameters.
+     * context's matrix. Additional optional matrices for both rects can be
+     * provided by parameters.
      *
-     * @param paint     describes how to color pixels.
-     * @param dstRect   the destination rect to draw.
-     * @param srcRect   rect of paint coordinates to be mapped onto dstRect
-     * @param dstMatrix Optional matrix to transform dstRect. Applied before
-     *                  context's matrix.
-     * @param srcMatrix Optional matrix to transform srcRect Applied before
-     *                  paint's matrix.
+     * @param paint         describes how to color pixels.
+     * @param dstRect       the destination rect to draw.
+     * @param localRect     rect of local coordinates to be mapped onto dstRect
+     * @param dstMatrix     Optional matrix to transform dstRect. Applied before context's matrix.
+     * @param localMatrix   Optional matrix to transform localRect.
      */
     void drawRectToRect(const GrPaint& paint,
-                        const GrRect& dstRect,
-                        const GrRect& srcRect,
+                        const SkRect& dstRect,
+                        const SkRect& localRect,
                         const SkMatrix* dstMatrix = NULL,
-                        const SkMatrix* srcMatrix = NULL);
+                        const SkMatrix* localMatrix = NULL);
+
+    /**
+     *  Draw a roundrect using a paint.
+     *
+     *  @param paint        describes how to color pixels.
+     *  @param rrect        the roundrect to draw
+     *  @param stroke       the stroke information (width, join, cap)
+     */
+    void drawRRect(const GrPaint& paint,
+                   const SkRRect& rrect,
+                   const SkStrokeRec& stroke);
 
     /**
      * Draws a path.
@@ -448,7 +474,7 @@ public:
      * @param stroke        the stroke information (width, style)
      */
     void drawOval(const GrPaint& paint,
-                  const GrRect& oval,
+                  const SkRect& oval,
                   const SkStrokeRec& stroke);
 
     ///////////////////////////////////////////////////////////////////////////
@@ -458,14 +484,6 @@ public:
      * Flags that affect flush() behavior.
      */
     enum FlushBits {
-        /**
-         * A client may want Gr to bind a GrRenderTarget in the 3D API so that
-         * it can be rendered to directly. However, Gr lazily sets state. Simply
-         * calling setRenderTarget() followed by flush() without flags may not
-         * bind the render target. This flag forces the context to bind the last
-         * set render target in the 3D API.
-         */
-        kForceCurrentRenderTarget_FlushBit   = 0x1,
         /**
          * A client may reach a point where it has partially rendered a frame
          * through a GrContext that it knows the user will never see. This flag
@@ -531,8 +549,11 @@ public:
      * @param rowBytes      number of bytes between consecutive rows. Zero means rows are tightly
      *                      packed.
      * @param pixelOpsFlags see PixelOpsFlags enum above.
+     *
+     * @return true if the write succeeded, false if not. The write can fail because of an
+     *         unsupported combination of target and pixel configs.
      */
-    void writeRenderTargetPixels(GrRenderTarget* target,
+    bool writeRenderTargetPixels(GrRenderTarget* target,
                                  int left, int top, int width, int height,
                                  GrPixelConfig config, const void* buffer,
                                  size_t rowBytes = 0,
@@ -572,8 +593,10 @@ public:
      * @param rowBytes      number of bytes between consecutive rows. Zero
      *                      means rows are tightly packed.
      * @param pixelOpsFlags see PixelOpsFlags enum above.
+     * @return true if the write succeeded, false if not. The write can fail because of an
+     *         unsupported combination of texture and pixel configs.
      */
-    void writeTexturePixels(GrTexture* texture,
+    bool writeTexturePixels(GrTexture* texture,
                             int left, int top, int width, int height,
                             GrPixelConfig config, const void* buffer,
                             size_t rowBytes,
@@ -603,22 +626,6 @@ public:
      * reading pixels back from a GrTexture or GrRenderTarget.
      */
     void resolveRenderTarget(GrRenderTarget* target);
-
-    /**
-     * Applies a 2D Gaussian blur to a given texture.
-     * @param srcTexture      The source texture to be blurred.
-     * @param canClobberSrc   If true, srcTexture may be overwritten, and
-     *                        may be returned as the result.
-     * @param rect            The destination rectangle.
-     * @param sigmaX          The blur's standard deviation in X.
-     * @param sigmaY          The blur's standard deviation in Y.
-     * @return the blurred texture, which may be srcTexture reffed, or a
-     * new texture.  It is the caller's responsibility to unref this texture.
-     */
-     GrTexture* gaussianBlur(GrTexture* srcTexture,
-                             bool canClobberSrc,
-                             const SkRect& rect,
-                             float sigmaX, float sigmaY);
 
     ///////////////////////////////////////////////////////////////////////////
     // Helpers
@@ -690,7 +697,7 @@ public:
             this->restore();
 
             if (NULL != paint) {
-                if (!paint->sourceCoordChangeByInverse(context->getMatrix())) {
+                if (!paint->localCoordChangeInverse(context->getMatrix())) {
                     return false;
                 }
             }
@@ -728,7 +735,7 @@ public:
          */
         void preConcat(const SkMatrix& preConcat, GrPaint* paint = NULL) {
             if (NULL != paint) {
-                paint->sourceCoordChange(preConcat);
+                paint->localCoordChange(preConcat);
             }
             fContext->concatMatrix(preConcat);
         }
@@ -772,7 +779,7 @@ public:
             context->setClip(&fNewClipData);
         }
 
-        AutoClip(GrContext* context, const GrRect& newClipRect)
+        AutoClip(GrContext* context, const SkRect& newClipRect)
         : fContext(context)
         , fNewClipStack(newClipRect) {
             fNewClipData.fClipStack = &fNewClipStack;
@@ -815,7 +822,7 @@ public:
     GrGpu* getGpu() { return fGpu; }
     const GrGpu* getGpu() const { return fGpu; }
     GrFontCache* getFontCache() { return fFontCache; }
-    GrDrawTarget* getTextTarget(const GrPaint& paint);
+    GrDrawTarget* getTextTarget();
     const GrIndexBuffer* getQuadIndexBuffer() const;
 
     /**
@@ -837,16 +844,6 @@ public:
     void printCacheStats() const;
 #endif
 
-    ///////////////////////////////////////////////////////////////////////////
-    // Legacy names that will be kept until WebKit can be updated.
-    GrTexture* createPlatformTexture(const GrPlatformTextureDesc& desc) {
-        return this->wrapBackendTexture(desc);
-    }
-
-    GrRenderTarget* createPlatformRenderTarget(const GrPlatformRenderTargetDesc& desc) {
-        return wrapBackendRenderTarget(desc);
-    }
-
 private:
     // Used to indicate whether a draw should be performed immediately or queued in fDrawBuffer.
     enum BufferedDraw {
@@ -855,52 +852,56 @@ private:
     };
     BufferedDraw fLastDrawWasBuffered;
 
-    GrGpu*              fGpu;
-    GrDrawState*        fDrawState;
+    GrGpu*                          fGpu;
+    SkMatrix                        fViewMatrix;
+    SkAutoTUnref<GrRenderTarget>    fRenderTarget;
+    const GrClipData*               fClip;  // TODO: make this ref counted
+    GrDrawState*                    fDrawState;
 
-    GrResourceCache*    fTextureCache;
-    GrFontCache*        fFontCache;
+    GrResourceCache*                fTextureCache;
+    GrFontCache*                    fFontCache;
 
-    GrPathRendererChain*        fPathRendererChain;
-    GrSoftwarePathRenderer*     fSoftwarePathRenderer;
+    GrPathRendererChain*            fPathRendererChain;
+    GrSoftwarePathRenderer*         fSoftwarePathRenderer;
 
-    GrVertexBufferAllocPool*    fDrawBufferVBAllocPool;
-    GrIndexBufferAllocPool*     fDrawBufferIBAllocPool;
-    GrInOrderDrawBuffer*        fDrawBuffer;
+    GrVertexBufferAllocPool*        fDrawBufferVBAllocPool;
+    GrIndexBufferAllocPool*         fDrawBufferIBAllocPool;
+    GrInOrderDrawBuffer*            fDrawBuffer;
 
-    GrAARectRenderer*           fAARectRenderer;
+    GrAARectRenderer*               fAARectRenderer;
+    GrOvalRenderer*                 fOvalRenderer;
 
-    bool                        fDidTestPMConversions;
-    int                         fPMToUPMConversion;
-    int                         fUPMToPMConversion;
+    bool                            fDidTestPMConversions;
+    int                             fPMToUPMConversion;
+    int                             fUPMToPMConversion;
 
     struct CleanUpData {
         PFCleanUpFunc fFunc;
         void*         fInfo;
     };
 
-    SkTDArray<CleanUpData>      fCleanUpData;
+    SkTDArray<CleanUpData>          fCleanUpData;
 
-    GrContext(GrGpu* gpu);
+    int                             fMaxTextureSizeOverride;
+
+    GrContext(); // init must be called after the constructor.
+    bool init(GrBackend, GrBackendContext);
 
     void setupDrawBuffer();
 
-    void flushDrawBuffer();
-
+    class AutoRestoreEffects;
     /// Sets the paint and returns the target to draw into. The paint can be NULL in which case the
     /// draw state is left unmodified.
-    GrDrawTarget* prepareToDraw(const GrPaint*, BufferedDraw);
+    GrDrawTarget* prepareToDraw(const GrPaint*, BufferedDraw, AutoRestoreEffects*);
 
-    void internalDrawPath(const GrPaint& paint, const SkPath& path, const SkStrokeRec& stroke);
-
-    void internalDrawOval(const GrPaint& paint, const GrRect& oval, const SkStrokeRec& stroke);
-    bool canDrawOval(const GrPaint& paint, const GrRect& oval, const SkStrokeRec& stroke) const;
+    void internalDrawPath(GrDrawTarget* target, bool useAA, const SkPath& path,
+                          const SkStrokeRec& stroke);
 
     GrTexture* createResizedTexture(const GrTextureDesc& desc,
                                     const GrCacheID& cacheID,
                                     void* srcData,
                                     size_t rowBytes,
-                                    bool needsFiltering);
+                                    bool filter);
 
     // Needed so GrTexture's returnToCache helper function can call
     // addExistingTextureToCache
@@ -921,6 +922,12 @@ private:
     const GrEffectRef* createUPMToPMEffect(GrTexture* texture,
                                            bool swapRAndB,
                                            const SkMatrix& matrix);
+
+    /**
+     *  This callback allows the resource cache to callback into the GrContext
+     *  when the cache is still overbudget after a purge.
+     */
+    static bool OverbudgetCB(void* data);
 
     typedef GrRefCnt INHERITED;
 };
@@ -969,6 +976,9 @@ public:
      * returned texture.
      */
     GrTexture* detach() {
+        if (NULL == fTexture) {
+            return NULL;
+        }
         GrTexture* texture = fTexture;
         fTexture = NULL;
 

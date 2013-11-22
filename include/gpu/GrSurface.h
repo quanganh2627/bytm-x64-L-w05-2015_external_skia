@@ -34,8 +34,8 @@ public:
     int height() const { return fDesc.fHeight; }
 
     GrSurfaceOrigin origin() const {
-        GrAssert(kTopLeft_GrSurfaceOrigin == fOrigin || kBottomLeft_GrSurfaceOrigin == fOrigin);
-        return fOrigin;
+        GrAssert(kTopLeft_GrSurfaceOrigin == fDesc.fOrigin || kBottomLeft_GrSurfaceOrigin == fDesc.fOrigin);
+        return fDesc.fOrigin;
     }
 
     /**
@@ -62,6 +62,22 @@ public:
      */
     virtual GrRenderTarget* asRenderTarget() = 0;
     virtual const GrRenderTarget* asRenderTarget() const = 0;
+
+    /**
+     * Checks whether this GrSurface refers to the same GPU object as other. This
+     * catches the case where a GrTexture and GrRenderTarget refer to the same
+     * GPU memory.
+     */
+    bool isSameAs(const GrSurface* other) const {
+        const GrRenderTarget* thisRT = this->asRenderTarget();
+        if (NULL != thisRT) {
+            return thisRT == other->asRenderTarget();
+        } else {
+            const GrTexture* thisTex = this->asTexture();
+            GrAssert(NULL != thisTex); // We must be one or the other
+            return thisTex == other->asTexture();
+        }
+    }
 
     /**
      * Reads a rectangle of pixels from the surface.
@@ -104,17 +120,14 @@ public:
                              uint32_t pixelOpsFlags = 0) = 0;
 
 protected:
-    GrSurface(GrGpu* gpu, bool isWrapped, const GrTextureDesc& desc, GrSurfaceOrigin origin)
+    GrSurface(GrGpu* gpu, bool isWrapped, const GrTextureDesc& desc)
     : INHERITED(gpu, isWrapped)
-    , fDesc(desc)
-    , fOrigin(origin) {
+    , fDesc(desc) {
     }
 
     GrTextureDesc fDesc;
 
 private:
-    GrSurfaceOrigin fOrigin;
-
     typedef GrResource INHERITED;
 };
 

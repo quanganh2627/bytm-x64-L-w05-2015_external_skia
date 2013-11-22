@@ -12,7 +12,7 @@
 
 #if defined(SK_BUILD_FOR_ANDROID)
 
-#if defined(SK_BUILD_FOR_ANDROID_NDK)
+#if !defined(SK_BUILD_FOR_ANDROID_FRAMEWORK)
 
 #include <stdint.h>
 
@@ -51,12 +51,12 @@ static inline __attribute__((always_inline)) int32_t sk_atomic_conditional_inc(i
 }
 static inline __attribute__((always_inline)) void sk_membar_aquire__after_atomic_conditional_inc() { }
 
-#else // !SK_BUILD_FOR_ANDROID_NDK
+#else // SK_BUILD_FOR_ANDROID_FRAMEWORK
 
 /* The platform atomics operations are slightly more efficient than the
  * GCC built-ins, so use them.
  */
-#include <utils/Atomic.h>
+#include <cutils/atomic.h>
 
 #define sk_atomic_inc(addr)         android_atomic_inc(addr)
 #define sk_atomic_add(addr, inc)    android_atomic_add(inc, addr)
@@ -86,7 +86,7 @@ static inline __attribute__((always_inline)) void sk_membar_aquire__after_atomic
     //android_atomic_aquire_store(0, &dummy);
 }
 
-#endif // !SK_BUILD_FOR_ANDROID_NDK
+#endif // SK_BUILD_FOR_ANDROID_FRAMEWORK
 
 #else  // !SK_BUILD_FOR_ANDROID
 
@@ -154,8 +154,6 @@ struct SkBaseMutex {
 // Special case used when the static mutex must be available globally.
 #define SK_DECLARE_GLOBAL_MUTEX(name)   SkBaseMutex  name = { PTHREAD_MUTEX_INITIALIZER }
 
-#define SK_DECLARE_MUTEX_ARRAY(name, count)    SkBaseMutex name[count] = { { PTHREAD_MUTEX_INITIALIZER } }
-
 // A normal mutex that requires to be initialized through normal C++ construction,
 // i.e. when it's a member of another class, or allocated on the heap.
 class SK_API SkMutex : public SkBaseMutex, SkNoncopyable {
@@ -189,7 +187,6 @@ typedef SkMutex SkBaseMutex;
 
 #define SK_DECLARE_STATIC_MUTEX(name)           static SkBaseMutex  name
 #define SK_DECLARE_GLOBAL_MUTEX(name)           SkBaseMutex  name
-#define SK_DECLARE_MUTEX_ARRAY(name, count)     SkBaseMutex name[count]
 
 #endif // !SK_USE_POSIX_THREADS
 

@@ -11,9 +11,10 @@
 #include "SkRefCnt.h"
 #include "SkString.h"
 #include "SkTRegistry.h"
+#include "SkThread.h"
+#include "SkTypes.h"
 
-class GrContext;
-class SkGLContext;
+class GrContextFactory;
 
 namespace skiatest {
 
@@ -24,56 +25,24 @@ namespace skiatest {
         SK_DECLARE_INST_COUNT(Reporter)
         Reporter();
 
-        enum Result {
-            kPassed,    // must begin with 0
-            kFailed,
-            /////
-            kLastResult = kFailed
-        };
-
-        void resetReporting();
         int countTests() const { return fTestCount; }
-        int countResults(Result r) {
-            SkASSERT((unsigned)r <= kLastResult);
-            return fResultCount[r];
-        }
 
         void startTest(Test*);
-        void report(const char testDesc[], Result);
+        void reportFailed(const SkString& desc);
         void endTest(Test*);
 
-        // helpers for tests
-        void assertTrue(bool cond, const char desc[]) {
-            if (!cond) {
-                this->report(desc, kFailed);
-            }
-        }
-        void assertFalse(bool cond, const char desc[]) {
-            if (cond) {
-                this->report(desc, kFailed);
-            }
-        }
-        void reportFailed(const char desc[]) {
-            this->report(desc, kFailed);
-        }
-        void reportFailed(const SkString& desc) {
-            this->report(desc.c_str(), kFailed);
-        }
-
-        bool getCurrSuccess() const {
-            return fCurrTestSuccess;
-        }
+        virtual bool allowExtendedTest() const { return false; }
+        virtual bool allowThreaded() const { return false; }
+        virtual bool verbose() const { return false; }
+        virtual void bumpTestCount() { sk_atomic_inc(&fTestCount); }
 
     protected:
         virtual void onStart(Test*) {}
-        virtual void onReport(const char desc[], Result) {}
+        virtual void onReportFailed(const SkString& desc) {}
         virtual void onEnd(Test*) {}
 
     private:
-        Test* fCurrTest;
-        int fTestCount;
-        int fResultCount[kLastResult+1];
-        bool fCurrTestSuccess;
+        int32_t fTestCount;
 
         typedef SkRefCnt INHERITED;
     };
@@ -87,7 +56,15 @@ namespace skiatest {
         void setReporter(Reporter*);
 
         const char* getName();
-        bool run(); // returns true on success
+        void run();
+        bool passed() const { return fPassed; }
+        SkMSec elapsedMs() const { return fElapsed; }
+
+        static SkString GetTmpDir();
+
+        static SkString GetResourcePath();
+
+        virtual bool isThreadsafe() const { return true; }
 
     protected:
         virtual void onGetName(SkString*) = 0;
@@ -96,17 +73,16 @@ namespace skiatest {
     private:
         Reporter*   fReporter;
         SkString    fName;
+        bool        fPassed;
+        SkMSec      fElapsed;
     };
 
     class GpuTest : public Test{
     public:
-        GpuTest() : Test() {
-            fContext = GetContext();
-        }
-        static GrContext* GetContext();
-        static void DestroyContext();
-    protected:
-        GrContext* fContext;
+        GpuTest() : Test() {}
+        static GrContextFactory* GetGrContextFactory();
+        static void DestroyContexts();
+        virtual bool isThreadsafe() const { return false; }
     private:
     };
 

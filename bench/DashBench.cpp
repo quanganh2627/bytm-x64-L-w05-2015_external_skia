@@ -102,7 +102,7 @@ private:
 
 class RectDashBench : public DashBench {
 public:
-    RectDashBench(void* param, const SkScalar intervals[], int count, int width, bool doClip = false)
+    RectDashBench(void* param, const SkScalar intervals[], int count, int width)
     : INHERITED(param, intervals, count, width) {
         fName.append("_rect");
     }
@@ -201,7 +201,7 @@ protected:
         return fName.c_str();
     }
 
-    virtual void onDraw(SkCanvas* canvas) SK_OVERRIDE {
+    virtual void onDraw(SkCanvas*) SK_OVERRIDE {
         SkPath dst;
         for (int i = 0; i < N; ++i) {
             SkStrokeRec rec(SkStrokeRec::kHairline_InitStyle);
@@ -323,12 +323,13 @@ public:
     enum LineType {
         kHori_LineType,
         kVert_LineType,
-        kDiag_LineType
+        kDiag_LineType,
+        kLineTypeCount
     };
 
     static const char* LineTypeName(LineType lt) {
         static const char* gNames[] = { "hori", "vert", "diag" };
-        SkASSERT((size_t)lt <= SK_ARRAY_COUNT(gNames));
+        SK_COMPILE_ASSERT(kLineTypeCount == SK_ARRAY_COUNT(gNames), names_wrong_size);
         return gNames[lt];
     }
 
@@ -355,6 +356,9 @@ public:
                 break;
             case kDiag_LineType:
                 matrix.setRotate(45, cx, cy);
+                break;
+            case kLineTypeCount:
+                // Not a real enum value.
                 break;
         }
 
@@ -412,6 +416,10 @@ DEF_BENCH( return new DrawPointsDashingBench(p, 3, 1, true); )
 DEF_BENCH( return new DrawPointsDashingBench(p, 5, 5, false); )
 DEF_BENCH( return new DrawPointsDashingBench(p, 5, 5, true); )
 
+/* Disable the GiantDashBench for Android devices until we can better control
+ * the memory usage. (https://code.google.com/p/skia/issues/detail?id=1430)
+ */
+#ifndef SK_BUILD_FOR_ANDROID
 DEF_BENCH( return new GiantDashBench(p, GiantDashBench::kHori_LineType, 0); )
 DEF_BENCH( return new GiantDashBench(p, GiantDashBench::kVert_LineType, 0); )
 DEF_BENCH( return new GiantDashBench(p, GiantDashBench::kDiag_LineType, 0); )
@@ -422,3 +430,4 @@ DEF_BENCH( return new GiantDashBench(p, GiantDashBench::kDiag_LineType, 0); )
 DEF_BENCH( return new GiantDashBench(p, GiantDashBench::kHori_LineType, 2); )
 DEF_BENCH( return new GiantDashBench(p, GiantDashBench::kVert_LineType, 2); )
 DEF_BENCH( return new GiantDashBench(p, GiantDashBench::kDiag_LineType, 2); )
+#endif

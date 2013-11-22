@@ -41,7 +41,24 @@
 // ANDROID Specific changes - NO NOT CHECK BACK INTO code.google.com/p/skia
 //
 
-#define SK_BUILD_FOR_ANDROID
+// When built as part of the system image we can enable certian non-NDK compliant
+// optimizations.
+#define SK_BUILD_FOR_ANDROID_FRAMEWORK
+#define SK_SUPPORT_GPU 1
+
+// Android Text Tuning
+#define SK_GAMMA_APPLY_TO_A8
+#define SK_GAMMA_EXPONENT 1.4
+#define SK_GAMMA_CONTRAST 0.0
+
+// Optimizations for chromium (m30)
+#define GR_GL_CUSTOM_SETUP_HEADER "gl/GrGLConfig_chrome.h"
+#define IGNORE_ROT_AA_RECT_OPT
+#define SKIA_IGNORE_GPU_MIPMAPS
+
+// Disable this check because it is too strict for some chromium-specific
+// subclasses of SkPixelRef. See bug: crbug.com/171776.
+#define SK_DISABLE_PIXELREF_LOCKCOUNT_BALANCE_CHECK
 
 // do this build check for other tools that still read this header
 #ifdef ANDROID
@@ -140,10 +157,12 @@
  */
 #define SK_DEFAULT_FONT_CACHE_LIMIT   (768 * 1024)
 
-/* If defined, use CoreText instead of ATSUI on OS X.
-*/
-//#define SK_USE_MAC_CORE_TEXT
-
+/*
+ *  To specify the default size of the image cache, undefine this and set it to
+ *  the desired value (in bytes). SkGraphics.h as a runtime API to set this
+ *  value as well. If this is undefined, a built-in value will be used.
+ */
+//#define SK_DEFAULT_IMAGE_CACHE_LIMIT (1024 * 1024)
 
 /*  If zlib is available and you want to support the flate compression
     algorithm (used in PDF generation), define SK_ZLIB_INCLUDE to be the
@@ -160,18 +179,7 @@
 
 /*  Define this to provide font subsetter in PDF generation.
  */
-//#define SK_SFNTLY_SUBSETTER "sfntly/subsetter/font_subsetter.h"
-
-/*  Define this to remove dimension checks on bitmaps. Not all blits will be
-    correct yet, so this is mostly for debugging the implementation.
- */
-//#define SK_ALLOW_OVER_32K_BITMAPS
-
-/**
- *  To revert to int-only srcrect behavior in drawBitmapRect(ToRect),
- *  define this symbol.
- */
-//#define SK_SUPPORT_INT_SRCRECT_DRAWBITMAPRECT
+#define SK_SFNTLY_SUBSETTER "sample/chromium/font_subsetter.h"
 
 /*  Define this to set the upper limit for text to support LCD. Values that
     are very large increase the cost in the font cache and draw slower, without
@@ -218,5 +226,14 @@
    backend. Defaults to 1 (build the GPU code).
  */
 //#define SK_SUPPORT_GPU 1
+
+/* The PDF generation code uses Path Ops to generate inverse fills and complex
+ * clipping paths, but at this time, Path Ops is not release ready yet. So,
+ * the code is hidden behind this #define guard. If you are feeling adventurous
+ * and want the latest and greatest PDF generation code, uncomment the #define.
+ * When Path Ops is release ready, the define guards and this user config
+ * define should be removed entirely.
+ */
+//#define SK_PDF_USE_PATHOPS
 
 #endif

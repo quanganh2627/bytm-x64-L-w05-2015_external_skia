@@ -230,11 +230,6 @@ private:
 
 bool SkDashPathEffect::filterPath(SkPath* dst, const SkPath& src,
                               SkStrokeRec* rec, const SkRect* cullRect) const {
-
-#ifdef SK_IGNORE_LARGE_DASH_OPT
-    cullRect = NULL;
-#endif
-
     // we do nothing if the src wants to be filled, or if our dashlength is 0
     if (rec->isFillStyle() || fInitialDashLength < 0) {
         return false;
@@ -242,6 +237,7 @@ bool SkDashPathEffect::filterPath(SkPath* dst, const SkPath& src,
 
     const SkScalar* intervals = fIntervals;
     SkScalar        dashCount = 0;
+    int             segCount = 0;
 
     SkPath cullPathStorage;
     const SkPath* srcPtr = &src;
@@ -296,6 +292,7 @@ bool SkDashPathEffect::filterPath(SkPath* dst, const SkPath& src,
             addedSegment = false;
             if (is_even(index) && dlen > 0 && !skipFirstSegment) {
                 addedSegment = true;
+                ++segCount;
 
                 if (specialLine) {
                     lineRec.addSegment(SkDoubleToScalar(distance),
@@ -327,8 +324,13 @@ bool SkDashPathEffect::filterPath(SkPath* dst, const SkPath& src,
         if (meas.isClosed() && is_even(fInitialDashIndex) &&
                 fInitialDashLength > 0) {
             meas.getSegment(0, SkScalarMul(fInitialDashLength, scale), dst, !addedSegment);
+            ++segCount;
         }
     } while (meas.nextContour());
+
+    if (segCount > 1) {
+        dst->setConvexity(SkPath::kConcave_Convexity);
+    }
 
     return true;
 }

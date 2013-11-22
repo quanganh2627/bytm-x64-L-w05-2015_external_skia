@@ -6,7 +6,7 @@
 #    'SK_SUPPORT_HINTING_SCALE_FACTOR',
   ],
   'conditions' : [
-    ['skia_gpu == 1',
+    [ 'skia_gpu == 1',
       {
         'defines': [
           'SK_SUPPORT_GPU=1',
@@ -17,10 +17,22 @@
         ],
       },
     ],
-    ['skia_os == "win"',
+    [ 'skia_opencl == 1',
+      {
+        'defines': [
+          'SK_SUPPORT_OPENCL=1',
+        ],
+      }, {
+        'defines': [
+          'SK_SUPPORT_OPENCL=0',
+        ],
+      },
+    ],
+    [ 'skia_os == "win"',
       {
         'defines': [
           'SK_BUILD_FOR_WIN32',
+          'SK_FONTHOST_USES_FONTMGR',
           'SK_IGNORE_STDINT_DOT_H',
           '_CRT_SECURE_NO_WARNINGS',
           'GR_GL_FUNCTION_TYPE=__stdcall',
@@ -28,14 +40,31 @@
         'msvs_cygwin_shell': 0,
         'msvs_settings': {
           'VCCLCompilerTool': {
-            'WarningLevel': '1',
+            'WarningLevel': '3',
+            'ProgramDataBaseFileName': '$(OutDir)\\$(ProjectName).pdb',
             'DebugInformationFormat': '3',
-            'AdditionalOptions': [ '/MP' ],
+            'ExceptionHandling': '0',
+            'AdditionalOptions': [ '/MP', ],
           },
           'VCLinkerTool': {
             'AdditionalDependencies': [
               'OpenGL32.lib',
               'usp10.lib',
+
+              # Prior to gyp r1584, the following were included automatically.
+              'kernel32.lib',
+              'gdi32.lib',
+              'winspool.lib',
+              'comdlg32.lib',
+              'advapi32.lib',
+              'shell32.lib',
+              'ole32.lib',
+              'oleaut32.lib',
+              'user32.lib',
+              'uuid.lib',
+              'odbc32.lib',
+              'odbccp32.lib',
+              'DelayImp.lib',
             ],
           },
         },
@@ -44,13 +73,10 @@
             'msvs_settings': {
               'VCCLCompilerTool': {
                 'DebugInformationFormat': '4', # editAndContiue (/ZI)
-                'ProgramDataBaseFileName': '$(OutDir)\\$(ProjectName).pdb',
                 'Optimization': '0',           # optimizeDisabled (/Od)
                 'PreprocessorDefinitions': ['_DEBUG'],
                 'RuntimeLibrary': '3',         # rtMultiThreadedDebugDLL (/MDd)
-                'ExceptionHandling': '0',
                 'RuntimeTypeInfo': 'false',      # /GR-
-                'WarningLevel': '3',             # level3 (/W3)
               },
               'VCLinkerTool': {
                 'GenerateDebugInformation': 'true', # /DEBUG
@@ -62,18 +88,15 @@
             'msvs_settings': {
               'VCCLCompilerTool': {
                 'DebugInformationFormat': '3',      # programDatabase (/Zi)
-                'ProgramDataBaseFileName': '$(OutDir)\\$(ProjectName).pdb',
-                'Optimization': '3',                # full (/Ox)
+                'Optimization': '<(skia_release_optimization_level)',
                 'WholeProgramOptimization': 'true', #/GL
                # Changing the floating point model requires rebaseling gm images
                #'FloatingPointModel': '2',          # fast (/fp:fast)
                 'FavorSizeOrSpeed': '1',            # speed (/Ot)
                 'PreprocessorDefinitions': ['NDEBUG'],
                 'RuntimeLibrary': '2',              # rtMultiThreadedDLL (/MD)
-                'ExceptionHandling': '0',
                 'EnableEnhancedInstructionSet': '2',# /arch:SSE2
                 'RuntimeTypeInfo': 'false',         # /GR-
-                'WarningLevel': '3',                # level3 (/W3)
               },
               'VCLinkerTool': {
                 'GenerateDebugInformation': 'true', # /DEBUG
@@ -86,37 +109,88 @@
           },
         },
         'conditions' : [
-          ['skia_arch_width == 64', {
+          [ 'skia_arch_width == 64', {
             'msvs_configuration_platform': 'x64',
+          }],
+          [ 'skia_arch_width == 32', {
+            'msvs_configuration_platform': 'Win32',
+          }],
+          [ 'skia_warnings_as_errors', {
             'msvs_settings': {
               'VCCLCompilerTool': {
-                'WarnAsError': 'false',
+                'WarnAsError': 'true',
+                'AdditionalOptions': [
+                  '/we4189', # initialized but unused var warning
+                ],
               },
             },
           }],
-          ['skia_arch_width == 32', {
-            # This gypi file will be included directly into the gyp(i) files in the angle repo by
-            # our gyp_skia script. We don't want force WarnAsError on angle. So angle.gyp defines
-            # skia_building_angle=1 and here we select whether to enable WarnAsError based on that
-            # var's value. Here it defaults to 0.
-            'variables' : {
-              'skia_building_angle%': 0,
+          [ 'skia_win_exceptions', {
+            'msvs_settings': {
+              'VCCLCompilerTool': {
+                'AdditionalOptions': [
+                  '/EHsc',
+                ],
+              },
             },
-            'conditions' : [
-              ['skia_building_angle', {
-                'msvs_configuration_platform': 'Win32',
-                'msvs_settings': {
-                  'VCCLCompilerTool': {
-                    'WarnAsError': 'false',
-                  },
-                },
-              },{ # not angle
-                'msvs_configuration_platform': 'Win32',
-                'msvs_settings': {
-                  'VCCLCompilerTool': {
-                    'WarnAsError': 'true',
-                  },
-                },
+          }],
+        ],
+      },
+    ],
+
+    # The following section is common to linux + derivatives and android
+    [ 'skia_os in ["linux", "freebsd", "openbsd", "solaris", "nacl", "chromeos", "android"]',
+      {
+        'conditions': [
+          [ 'skia_warnings_as_errors', {
+            'cflags': [
+              '-Werror',
+            ],
+          }],
+          [ 'skia_arch_type == "arm" and arm_thumb == 1', {
+            'cflags': [
+              '-mthumb',
+            ],
+            # The --fix-cortex-a8 switch enables a link-time workaround for
+            # an erratum in certain Cortex-A8 processors.  The workaround is
+            # enabled by default if you target the ARM v7-A arch profile.
+            # It can be enabled otherwise by specifying --fix-cortex-a8, or
+            # disabled unconditionally by specifying --no-fix-cortex-a8.
+            #
+            # The erratum only affects Thumb-2 code.
+            'conditions': [
+              [ 'arm_version < 7', {
+                'ldflags': [
+                  '-Wl,--fix-cortex-a8',
+                ],
+              }],
+            ],
+          }],
+          [ 'skia_arch_type == "arm" and arm_version >= 7', {
+            'cflags': [
+              '-march=armv7-a',
+            ],
+            'ldflags': [
+              '-march=armv7-a',
+            ],
+            'conditions': [
+              [ 'arm_neon == 1', {
+                'defines': [
+                  '__ARM_HAVE_NEON',
+                ],
+                'cflags': [
+                  '-mfpu=neon',
+                ],
+              }],
+              [ 'arm_neon_optional == 1', {
+                'defines': [
+                  '__ARM_HAVE_OPTIONAL_NEON_SUPPORT',
+                ],
+              }],
+              [ 'skia_os != "chromeos"', {
+                'cflags': [
+                  '-mfloat-abi=softfp',
+                ],
               }],
             ],
           }],
@@ -124,7 +198,8 @@
       },
     ],
 
-    ['skia_os in ["linux", "freebsd", "openbsd", "solaris", "nacl"]',
+
+    [ 'skia_os in ["linux", "freebsd", "openbsd", "solaris", "nacl", "chromeos"]',
       {
         'defines': [
           'SK_SAMPLES_FOR_X',
@@ -135,41 +210,30 @@
             'cflags': ['-g']
           },
           'Release': {
-            'cflags': ['-O3 -g'],
+            'cflags': [
+              '-O<(skia_release_optimization_level)',
+              '-g',
+            ],
             'defines': [ 'NDEBUG' ],
           },
         },
         'cflags': [
-          # TODO(tony): Enable -Werror once all the strict-aliasing problems
-          # are fixed.
-          #'-Werror',
           '-Wall',
           '-Wextra',
-          '-Wno-unused',
           # suppressions below here were added for clang
           '-Wno-unused-parameter',
           '-Wno-c++11-extensions'
         ],
         'conditions' : [
-          ['skia_warnings_as_errors == 1', {
+          [ 'skia_shared_lib', {
             'cflags': [
-              '-Werror',
+              '-fPIC',
             ],
-          }],
-          ['skia_arch_width == 64', {
-            'cflags': [
-              '-m64',
-            ],
-            'ldflags': [
-              '-m64',
-            ],
-          }],
-          ['skia_arch_width == 32', {
-            'cflags': [
-              '-m32',
-            ],
-            'ldflags': [
-              '-m32',
+            'defines': [
+              'GR_DLL=1',
+              'GR_IMPLEMENTATION=1',
+              'SKIA_DLL',
+              'SKIA_IMPLEMENTATION=1',
             ],
           }],
           [ 'skia_os == "nacl"', {
@@ -184,31 +248,80 @@
                 '-pthread',
               ],
             },
-          }, { # skia_os != "nacl"
-            'include_dirs' : [
-              '/usr/include/freetype2',
+          }],
+          [ 'skia_os == "chromeos"', {
+            'ldflags': [
+              '-lstdc++',
+              '-lm',
+            ],
+          }, {
+            'conditions': [
+              [ 'skia_arch_width == 64 and skia_arch_type == "x86"', {
+                'cflags': [
+                  '-m64',
+                ],
+                'ldflags': [
+                  '-m64',
+                ],
+              }],
+              [ 'skia_arch_width == 32 and skia_arch_type == "x86"', {
+                'cflags': [
+                  '-m32',
+                ],
+                'ldflags': [
+                  '-m32',
+                ],
+              }],
+            ],
+          }],
+          [ 'skia_asan_build', {
+            'cflags': [
+              '-fsanitize=address',
+              '-fno-omit-frame-pointer',
+            ],
+            'ldflags': [
+              '-fsanitize=address',
             ],
           }],
         ],
       },
     ],
 
-    ['skia_os == "mac"',
+    [ 'skia_os == "mac"',
       {
+        'variables': {
+          'mac_sdk%': '<!(python <(DEPTH)/tools/find_mac_sdk.py 10.6)',
+        },
         'defines': [
           'SK_BUILD_FOR_MAC',
+          'SK_FONTHOST_USES_FONTMGR',
         ],
         'conditions' : [
-          ['skia_arch_width == 64', {
+          [ 'skia_arch_width == 64', {
             'xcode_settings': {
-              'ARCHS': 'x86_64',
+              'ARCHS': ['x86_64'],
             },
           }],
-          ['skia_arch_width == 32', {
+          [ 'skia_arch_width == 32', {
             'xcode_settings': {
-              'ARCHS': 'i386',
+              'ARCHS': ['i386'],
+            },
+          }],
+          [ 'skia_warnings_as_errors', {
+            'xcode_settings': {
               'OTHER_CPLUSPLUSFLAGS': [
                 '-Werror',
+                '-Wall',
+                '-Wextra',
+                '-Wno-unused-parameter',
+              ],
+            },
+          }],
+# This old compiler is really bad at figuring out when things are uninitialized, so ignore it.
+          [ '<(mac_sdk)==10.6', {
+            'xcode_settings': {
+              'OTHER_CPLUSPLUSFLAGS': [
+                '-Wno-uninitialized',
               ],
             },
           }],
@@ -221,14 +334,20 @@
           },
           'Release': {
             'xcode_settings': {
-              'GCC_OPTIMIZATION_LEVEL': '3',
+              'GCC_OPTIMIZATION_LEVEL': '<(skia_release_optimization_level)',
             },
             'defines': [ 'NDEBUG' ],
           },
         },
         'xcode_settings': {
           'GCC_SYMBOLS_PRIVATE_EXTERN': 'NO',
-          'SDKROOT': '<(skia_osx_sdkroot)',
+          'conditions': [
+            [ 'skia_osx_sdkroot==""', {
+              'SDKROOT': 'macosx<(mac_sdk)',  # -isysroot
+            }, {
+              'SDKROOT': '<(skia_osx_sdkroot)',  # -isysroot
+            }],
+           ],
 # trying to get this to work, but it needs clang I think...
 #          'WARNING_CFLAGS': '-Wexit-time-destructors',
           'CLANG_WARN_CXX0X_EXTENSIONS': 'NO',
@@ -259,10 +378,19 @@
       },
     ],
 
-    ['skia_os == "ios"',
+    [ 'skia_os == "ios"',
       {
         'defines': [
           'SK_BUILD_FOR_IOS',
+        ],
+        'conditions' : [
+          [ 'skia_warnings_as_errors', {
+            'xcode_settings': {
+              'OTHER_CPLUSPLUSFLAGS': [
+                '-Werror',
+              ],
+            },
+          }],
         ],
         'configurations': {
           'Debug': {
@@ -272,29 +400,31 @@
           },
           'Release': {
             'xcode_settings': {
-              'GCC_OPTIMIZATION_LEVEL': '3',
+              'GCC_OPTIMIZATION_LEVEL': '<(skia_release_optimization_level)',
             },
             'defines': [ 'NDEBUG' ],
           },
         },
         'xcode_settings': {
-          'ARCHS': 'armv6 armv7',
+          'ARCHS': ['armv6', 'armv7'],
           'CODE_SIGNING_REQUIRED': 'NO',
           'CODE_SIGN_IDENTITY[sdk=iphoneos*]': '',
           'IPHONEOS_DEPLOYMENT_TARGET': '<(ios_sdk_version)',
           'SDKROOT': 'iphoneos',
           'TARGETED_DEVICE_FAMILY': '1,2',
-          'OTHER_CPLUSPLUSFLAGS': '-fvisibility=hidden -fvisibility-inlines-hidden',
+          'OTHER_CPLUSPLUSFLAGS': [
+            '-fvisibility=hidden',
+            '-fvisibility-inlines-hidden',
+          ],
           'GCC_THUMB_SUPPORT': 'NO',
         },
       },
     ],
 
-    ['skia_os == "android"',
+    [ 'skia_os == "android"',
       {
         'defines': [
           'SK_BUILD_FOR_ANDROID',
-          'SK_BUILD_FOR_ANDROID_NDK',
         ],
         'configurations': {
           'Debug': {
@@ -311,55 +441,29 @@
           '-llog',
         ],
         'cflags': [
+          '-Wall',
           '-fno-exceptions',
-          '-fno-rtti',
+          '-fstrict-aliasing',
           '-fuse-ld=gold',
         ],
+        'cflags_cc': [
+          '-fno-rtti',
+        ],
         'conditions': [
-          [ 'skia_warnings_as_errors == 1', {
+          [ 'skia_shared_lib', {
             'cflags': [
-              '-Werror',
+              '-fPIC',
+            ],
+            'defines': [
+              'GR_DLL=1',
+              'GR_IMPLEMENTATION=1',
+              'SKIA_DLL',
+              'SKIA_IMPLEMENTATION=1',
             ],
           }],
           [ 'skia_profile_enabled == 1', {
             'cflags': ['-g', '-fno-omit-frame-pointer', '-marm', '-mapcs'],
           }],
-          [ 'skia_arch_type == "arm" and arm_thumb == 1', {
-            'cflags': [
-              '-mthumb',
-            ],
-          }],
-          [ 'skia_arch_type == "arm" and armv7 == 1', {
-            'variables': {
-              'arm_neon_optional%': 0,
-            },
-            'defines': [
-              '__ARM_ARCH__=7',
-            ],
-            'cflags': [
-              '-march=armv7-a',
-              '-mfloat-abi=softfp',
-            ],
-            'conditions': [
-              [ 'arm_neon == 1', {
-                'defines': [
-                  '__ARM_HAVE_NEON',
-                ],
-                'cflags': [
-                  '-mfpu=neon',
-                ],
-                'ldflags': [
-                  '-march=armv7-a',
-                  '-Wl,--fix-cortex-a8',
-                ],
-              }],
-              [ 'arm_neon_optional == 1', {
-                'defines': [
-                  '__ARM_HAVE_OPTIONAL_NEON_SUPPORT',
-                ],
-              }],
-            ],
-         }],
         ],
       },
     ],

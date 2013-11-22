@@ -69,11 +69,11 @@
         }],
         [ 'skia_os == "ios"', {
           'skia_arch_type%': 'arm',
-          'armv7%': 1,
+          'arm_version%': 7,
           'arm_neon%': 0, # neon asm files known not to work with the ios build
         },{ # skia_os is not ios
           'skia_arch_type%': 'x86',
-          'armv7%': 0,
+          'arm_version%': 0,
           'arm_neon%': 0,
         }],
       ],
@@ -87,17 +87,43 @@
       'skia_angle%': 0,
       'skia_directwrite%': 0,
       'skia_gpu%': 1,
-      'skia_osx_sdkroot%': 'macosx',
+      'skia_osx_sdkroot%': '',
       'skia_profile_enabled%': 0,
-      # Note: This is currently only turned on for linux and android.
-      # TODO: Turn on for Win and Mac as well.
-      'skia_warnings_as_errors%': 0,
+      'skia_win_debuggers_path%': '',
+      'skia_shared_lib%': 0,
+      'skia_opencl%': 0,
+
+      # These variables determine the default optimization level for different
+      # compilers.
+      'skia_default_vs_optimization_level': 3, # full (/Ox)
+      'skia_default_gcc_optimization_level': 3, # -O3
     },
+
+    'conditions': [
+      [ 'skia_os == "win" and skia_arch_width == 32 or '
+        'skia_os in ["linux", "freebsd", "openbsd", "solaris", "android"] or '
+        'skia_os == "mac" and skia_arch_width == 32', {
+        'skia_warnings_as_errors%': 1,
+      }, {
+        'skia_warnings_as_errors%': 0,
+      }],
+
+      # This variable allows the user to customize the optimization level used
+      # by the compiler.  The user should be aware that this has different
+      # meanings for different compilers and should exercise caution when
+      # overriding it.
+      [ 'skia_os == "win"', {
+        'skia_release_optimization_level%': '<(skia_default_vs_optimization_level)',
+      }, {
+        'skia_release_optimization_level%': '<(skia_default_gcc_optimization_level)',
+      }],
+    ],
 
     # Re-define all variables defined within the level-2 'variables' dict,
     # so that siblings of the level-1 'variables' dict can see them.
-    'armv7%': '<(armv7)',
+    'arm_version%': '<(arm_version)',
     'arm_neon%': '<(arm_neon)',
+    'arm_neon_optional%': 0,
     'skia_os%': '<(skia_os)',
     'os_posix%': '<(os_posix)',
     'skia_scalar%': '<(skia_scalar)',
@@ -111,11 +137,15 @@
     'skia_arch_type%': '<(skia_arch_type)',
     'skia_directwrite%': '<(skia_directwrite)',
     'skia_gpu%': '<(skia_gpu)',
+    'skia_win_exceptions%': 0,
     'skia_osx_sdkroot%': '<(skia_osx_sdkroot)',
     'skia_profile_enabled%': '<(skia_profile_enabled)',
-    'skia_warnings_as_errors%': '<(skia_warnings_as_errors)',
+    'skia_shared_lib%': '<(skia_shared_lib)',
+    'skia_opencl%': '<(skia_opencl)',
     'skia_static_initializers%': '<(skia_static_initializers)',
     'ios_sdk_version%': '6.0',
+    'skia_win_debuggers_path%': '<(skia_win_debuggers_path)',
+    'skia_asan_build%': 0,
 
     # These are referenced by our .gypi files that list files (e.g. core.gypi)
     #

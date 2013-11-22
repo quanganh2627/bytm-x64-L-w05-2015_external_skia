@@ -52,28 +52,39 @@ const char* DrawTypeToString(DrawType drawType) {
         case CLIP_PATH: return "CLIP_PATH";
         case CLIP_REGION: return "CLIP_REGION";
         case CLIP_RECT: return "CLIP_RECT";
+        case CLIP_RRECT: return "CLIP_RRECT";
         case CONCAT: return "CONCAT";
         case DRAW_BITMAP: return "DRAW_BITMAP";
         case DRAW_BITMAP_MATRIX: return "DRAW_BITMAP_MATRIX";
-        case DRAW_BITMAP_RECT: return "DRAW_BITMAP_RECT";
+        case DRAW_BITMAP_NINE: return "DRAW_BITMAP_NINE";
+        case DRAW_BITMAP_RECT_TO_RECT: return "DRAW_BITMAP_RECT_TO_RECT";
+        case DRAW_CLEAR: return "DRAW_CLEAR";
+        case DRAW_DATA: return "DRAW_DATA";
+        case DRAW_OVAL: return "DRAW_OVAL";
         case DRAW_PAINT: return "DRAW_PAINT";
         case DRAW_PATH: return "DRAW_PATH";
         case DRAW_PICTURE: return "DRAW_PICTURE";
         case DRAW_POINTS: return "DRAW_POINTS";
         case DRAW_POS_TEXT: return "DRAW_POS_TEXT";
+        case DRAW_POS_TEXT_TOP_BOTTOM: return "DRAW_POS_TEXT_TOP_BOTTOM";
         case DRAW_POS_TEXT_H: return "DRAW_POS_TEXT_H";
-        case DRAW_RECT_GENERAL: return "DRAW_RECT_GENERAL";
-        case DRAW_RECT_SIMPLE: return "DRAW_RECT_SIMPLE";
+        case DRAW_POS_TEXT_H_TOP_BOTTOM: return "DRAW_POS_TEXT_H_TOP_BOTTOM";
+        case DRAW_RECT: return "DRAW_RECT";
+        case DRAW_RRECT: return "DRAW_RRECT";
         case DRAW_SPRITE: return "DRAW_SPRITE";
         case DRAW_TEXT: return "DRAW_TEXT";
         case DRAW_TEXT_ON_PATH: return "DRAW_TEXT_ON_PATH";
+        case DRAW_TEXT_TOP_BOTTOM: return "DRAW_TEXT_TOP_BOTTOM";
+        case DRAW_VERTICES: return "DRAW_VERTICES";
         case RESTORE: return "RESTORE";
         case ROTATE: return "ROTATE";
         case SAVE: return "SAVE";
         case SAVE_LAYER: return "SAVE_LAYER";
         case SCALE: return "SCALE";
+        case SET_MATRIX: return "SET_MATRIX";
         case SKEW: return "SKEW";
         case TRANSLATE: return "TRANSLATE";
+        case NOOP: return "NOOP";
         default:
             SkDebugf("DrawType error 0x%08x\n", drawType);
             SkASSERT(0);
@@ -110,7 +121,7 @@ SkPicture::SkPicture() {
     fWidth = fHeight = 0;
 }
 
-SkPicture::SkPicture(const SkPicture& src) : SkRefCnt() {
+SkPicture::SkPicture(const SkPicture& src) : INHERITED() {
     fWidth = src.fWidth;
     fHeight = src.fHeight;
     fRecord = NULL;
@@ -242,10 +253,10 @@ void SkPicture::endRecording() {
     SkASSERT(NULL == fRecord);
 }
 
-void SkPicture::draw(SkCanvas* surface) {
+void SkPicture::draw(SkCanvas* surface, SkDrawPictureCallback* callback) {
     this->endRecording();
     if (fPlayback) {
-        fPlayback->draw(*surface);
+        fPlayback->draw(*surface, callback);
     }
 }
 
@@ -253,42 +264,50 @@ void SkPicture::draw(SkCanvas* surface) {
 
 #include "SkStream.h"
 
-SkPicture::SkPicture(SkStream* stream, bool* success, SkSerializationHelpers::DecodeBitmap decoder) : SkRefCnt() {
-    if (success) {
-        *success = false;
+bool SkPicture::StreamIsSKP(SkStream* stream, SkPictInfo* pInfo) {
+    if (NULL == stream) {
+        return false;
     }
-    fRecord = NULL;
-    fPlayback = NULL;
-    fWidth = fHeight = 0;
 
     SkPictInfo info;
-
-    if (!stream->read(&info, sizeof(info))) {
-        return;
+    if (!stream->read(&info, sizeof(SkPictInfo))) {
+        return false;
     }
     if (PICTURE_VERSION != info.fVersion) {
-        return;
+        return false;
     }
 
-    if (stream->readBool()) {
-        bool isValid = false;
-        fPlayback = SkNEW_ARGS(SkPicturePlayback, (stream, info, &isValid, decoder));
-        if (!isValid) {
-            SkDELETE(fPlayback);
-            fPlayback = NULL;
-            return;
-        }
+    if (pInfo != NULL) {
+        *pInfo = info;
     }
-
-    // do this at the end, so that they will be zero if we hit an error.
-    fWidth = info.fWidth;
-    fHeight = info.fHeight;
-    if (success) {
-        *success = true;
-    }
+    return true;
 }
 
-void SkPicture::serialize(SkWStream* stream, SkSerializationHelpers::EncodeBitmap encoder) const {
+SkPicture::SkPicture(SkPicturePlayback* playback, int width, int height)
+    : fPlayback(playback)
+    , fRecord(NULL)
+    , fWidth(width)
+    , fHeight(height) {}
+
+SkPicture* SkPicture::CreateFromStream(SkStream* stream, InstallPixelRefProc proc) {
+    SkPictInfo info;
+
+    if (!StreamIsSKP(stream, &info)) {
+        return NULL;
+    }
+
+    SkPicturePlayback* playback;
+    // Check to see if there is a playback to recreate.
+    if (stream->readBool()) {
+        playback = SkNEW_ARGS(SkPicturePlayback, (stream, info, proc));
+    } else {
+        playback = NULL;
+    }
+
+    return SkNEW_ARGS(SkPicture, (playback, info.fWidth, info.fHeight));
+}
+
+void SkPicture::serialize(SkWStream* stream, EncodeBitmap encoder) const {
     SkPicturePlayback* playback = fPlayback;
 
     if (NULL == playback && fRecord) {

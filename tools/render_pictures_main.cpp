@@ -5,10 +5,11 @@
  * found in the LICENSE file.
  */
 
+#include "LazyDecodeBitmap.h"
 #include "CopyTilesRenderer.h"
 #include "SkBitmap.h"
-#include "SkCanvas.h"
 #include "SkDevice.h"
+#include "SkCommandLineFlags.h"
 #include "SkGraphics.h"
 #include "SkImageDecoder.h"
 #include "SkImageEncoder.h"
@@ -17,101 +18,28 @@
 #include "SkPicture.h"
 #include "SkStream.h"
 #include "SkString.h"
-#include "SkTArray.h"
 #include "PictureRenderer.h"
+#include "PictureRenderingFlags.h"
 #include "picture_utils.h"
 
-static void usage(const char* argv0) {
-    SkDebugf("SkPicture rendering tool\n");
-    SkDebugf("\n"
-"Usage: \n"
-"     %s <input>... \n"
-"     [-w <outputDir>]\n"
-"     [--mode pow2tile minWidth height | copyTile width height | simple\n"
-"         | tile width height]\n"
-"     [--pipe]\n"
-"     [--bbh bbhType]\n"
-"     [--multi count]\n"
-"     [--validate [--maxComponentDiff n]]\n"
-"     [--writeWholeImage]\n"
-"     [--clone n]\n"
-"     [--viewport width height][--scale sf]\n"
-"     [--device bitmap"
-#if SK_SUPPORT_GPU
-" | gpu"
-#endif
-"]"
-, argv0);
-    SkDebugf("\n\n");
-    SkDebugf(
-"     input:     A list of directories and files to use as input. Files are\n"
-"                expected to have the .skp extension.\n\n");
-    SkDebugf(
-"     outputDir: directory to write the rendered images.\n\n");
-    SkDebugf(
-"     --mode pow2tile minWidth height | copyTile width height | simple\n"
-"          | tile width height | rerecord: Run in the corresponding mode.\n"
-"                                     Default is simple.\n");
-    SkDebugf(
-"                     pow2tile minWidth height, Creates tiles with widths\n"
-"                                                  that are all a power of two\n"
-"                                                  such that they minimize the\n"
-"                                                  amount of wasted tile space.\n"
-"                                                  minWidth is the minimum width\n"
-"                                                  of these tiles and must be a\n"
-"                                                  power of two. A simple render\n"
-"                                                  is done with these tiles.\n");
-    SkDebugf(
-"                     simple, Render using the default rendering method.\n"
-"                     rerecord, Record the picture as a new skp, with the bitmaps PNG encoded.\n"
-             );
-    SkDebugf(
-"                     tile width height, Do a simple render using tiles\n"
-"                                              with the given dimensions.\n"
-"                     copyTile width height, Draw the picture, then copy it into tiles.\n"
-"                                                Does not support percentages.\n"
-"                                                If the picture is large enough, breaks it into\n"
-"                                                larger tiles (and draws the picture once per\n"
-"                                                larger tile) to avoid creating a large canvas.\n"
-"                                                Add --tiles x y to specify the number of tiles\n"
-"                                                per larger tile in the x and y direction.\n"
-             );
-    SkDebugf("\n");
-    SkDebugf(
-"     --multi count : Set the number of threads for multi threaded drawing. Must be greater\n"
-"                     than 1. Only works with tiled rendering.\n"
-"     --viewport width height : Set the viewport.\n"
-"     --scale sf : Scale drawing by sf.\n"
-"     --pipe: Benchmark SkGPipe rendering. Currently incompatible with \"mode\".\n");
-    SkDebugf(
-"     --validate: Verify that the rendered image contains the same pixels as "
-"the picture rendered in simple mode.\n"
-"     --maxComponentDiff: maximum diff on a component. Default is 256, "
-"which means we report but we do not generate an error.\n"
-"     --writeWholeImage: In tile mode, write the entire rendered image to a "
-"file, instead of an image for each tile.\n");
-    SkDebugf(
-"     --clone n: Clone the picture n times before rendering.\n");
-    SkDebugf(
-"     --bbh bbhType [width height]: Set the bounding box hierarchy type to\n"
-"                     be used. Accepted values are: none, rtree, grid. Default\n"
-"                     value is none. Not compatible with --pipe. With value\n"
-"                     'grid', width and height must be specified. 'grid' can\n"
-"                     only be used with modes tile, record, and\n"
-"                     playbackCreation.");
-    SkDebugf(
-"     --device bitmap"
-#if SK_SUPPORT_GPU
-" | gpu"
-#endif
-": Use the corresponding device. Default is bitmap.\n");
-    SkDebugf(
-"                     bitmap, Render to a bitmap.\n");
-#if SK_SUPPORT_GPU
-    SkDebugf(
-"                     gpu, Render to the GPU.\n");
-#endif
-}
+// Flags used by this file, alphabetically:
+DEFINE_int32(clone, 0, "Clone the picture n times before rendering.");
+DECLARE_bool(deferImageDecoding);
+DEFINE_int32(maxComponentDiff, 256, "Maximum diff on a component, 0 - 256. Components that differ "
+             "by more than this amount are considered errors, though all diffs are reported. "
+             "Requires --validate.");
+DECLARE_string(readPath);
+DEFINE_bool(writeEncodedImages, false, "Any time the skp contains an encoded image, write it to a "
+            "file rather than decoding it. Requires writePath to be set. Skips drawing the full "
+            "skp to a file. Not compatible with deferImageDecoding.");
+DEFINE_string2(writePath, w, "", "Directory to write the rendered images.");
+DEFINE_bool(writeWholeImage, false, "In tile mode, write the entire rendered image to a "
+            "file, instead of an image for each tile.");
+DEFINE_bool(validate, false, "Verify that the rendered image contains the same pixels as "
+            "the picture rendered in simple mode. When used in conjunction with --bbh, results "
+            "are validated against the picture rendered in the same mode, but without the bbh.");
+
+DEFINE_bool(bench_record, false, "If true, drop into an infinite loop of recording the picture.");
 
 static void make_output_filepath(SkString* path, const SkString& dir,
                                  const SkString& name) {
@@ -120,10 +48,93 @@ static void make_output_filepath(SkString* path, const SkString& dir,
     path->remove(path->size() - 4, 4);
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/**
+ *  Table for translating from format of data to a suffix.
+ */
+struct Format {
+    SkImageDecoder::Format  fFormat;
+    const char*             fSuffix;
+};
+static const Format gFormats[] = {
+    { SkImageDecoder::kBMP_Format, ".bmp" },
+    { SkImageDecoder::kGIF_Format, ".gif" },
+    { SkImageDecoder::kICO_Format, ".ico" },
+    { SkImageDecoder::kJPEG_Format, ".jpg" },
+    { SkImageDecoder::kPNG_Format, ".png" },
+    { SkImageDecoder::kWBMP_Format, ".wbmp" },
+    { SkImageDecoder::kWEBP_Format, ".webp" },
+    { SkImageDecoder::kUnknown_Format, "" },
+};
+
+/**
+ *  Get an appropriate suffix for an image format.
+ */
+static const char* get_suffix_from_format(SkImageDecoder::Format format) {
+    for (size_t i = 0; i < SK_ARRAY_COUNT(gFormats); i++) {
+        if (gFormats[i].fFormat == format) {
+            return gFormats[i].fSuffix;
+        }
+    }
+    return "";
+}
+
+/**
+ *  Base name for an image file created from the encoded data in an skp.
+ */
+static SkString gInputFileName;
+
+/**
+ *  Number to be appended to the image file name so that it is unique.
+ */
+static uint32_t gImageNo;
+
+/**
+ *  Set up the name for writing encoded data to a file.
+ *  Sets gInputFileName to name, minus any extension ".*"
+ *  Sets gImageNo to 0, so images from file "X.skp" will
+ *  look like "X_<gImageNo>.<suffix>", beginning with 0
+ *  for each new skp.
+ */
+static void reset_image_file_base_name(const SkString& name) {
+    gImageNo = 0;
+    // Remove ".skp"
+    const char* cName = name.c_str();
+    const char* dot = strrchr(cName, '.');
+    if (dot != NULL) {
+        gInputFileName.set(cName, dot - cName);
+    } else {
+        gInputFileName.set(name);
+    }
+}
+
+/**
+ *  Write the raw encoded bitmap data to a file.
+ */
+static bool write_image_to_file(const void* buffer, size_t size, SkBitmap* bitmap) {
+    SkASSERT(!FLAGS_writePath.isEmpty());
+    SkMemoryStream memStream(buffer, size);
+    SkString outPath;
+    SkImageDecoder::Format format = SkImageDecoder::GetStreamFormat(&memStream);
+    SkString name = SkStringPrintf("%s_%d%s", gInputFileName.c_str(), gImageNo++,
+                                   get_suffix_from_format(format));
+    SkString dir(FLAGS_writePath[0]);
+    sk_tools::make_filepath(&outPath, dir, name);
+    SkFILEWStream fileStream(outPath.c_str());
+    if (!(fileStream.isValid() && fileStream.write(buffer, size))) {
+        SkDebugf("Failed to write encoded data to \"%s\"\n", outPath.c_str());
+    }
+    // Put in a dummy bitmap.
+    return SkImageDecoder::DecodeStream(&memStream, bitmap, SkBitmap::kNo_Config,
+                                        SkImageDecoder::kDecodeBounds_Mode);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 static bool render_picture(const SkString& inputPath, const SkString* outputDir,
                            sk_tools::PictureRenderer& renderer,
-                           SkBitmap** out,
-                           int clones) {
+                           SkBitmap** out) {
     SkString inputFilename;
     sk_tools::get_basename(&inputFilename, inputPath);
 
@@ -134,15 +145,34 @@ static bool render_picture(const SkString& inputPath, const SkString* outputDir,
         return false;
     }
 
-    bool success = false;
-    SkPicture* picture = SkNEW_ARGS(SkPicture,
-            (&inputStream, &success, &SkImageDecoder::DecodeStream));
-    if (!success) {
+    SkPicture::InstallPixelRefProc proc;
+    if (FLAGS_deferImageDecoding) {
+        proc = &sk_tools::LazyDecodeBitmap;
+    } else if (FLAGS_writeEncodedImages) {
+        SkASSERT(!FLAGS_writePath.isEmpty());
+        reset_image_file_base_name(inputFilename);
+        proc = &write_image_to_file;
+    } else {
+        proc = &SkImageDecoder::DecodeMemory;
+    }
+
+    SkDebugf("deserializing... %s\n", inputPath.c_str());
+
+    SkPicture* picture = SkPicture::CreateFromStream(&inputStream, proc);
+
+    if (NULL == picture) {
         SkDebugf("Could not read an SkPicture from %s\n", inputPath.c_str());
         return false;
     }
 
-    for (int i = 0; i < clones; ++i) {
+    while (FLAGS_bench_record) {
+        const int kRecordFlags = 0;
+        SkPicture other;
+        picture->draw(other.beginRecording(picture->width(), picture->height(), kRecordFlags));
+        other.endRecording();
+    }
+
+    for (int i = 0; i < FLAGS_clone; ++i) {
         SkPicture* clone = picture->clone();
         SkDELETE(picture);
         picture = clone;
@@ -155,12 +185,12 @@ static bool render_picture(const SkString& inputPath, const SkString* outputDir,
     renderer.setup();
 
     SkString* outputPath = NULL;
-    if (NULL != outputDir) {
+    if (NULL != outputDir && outputDir->size() > 0 && !FLAGS_writeEncodedImages) {
         outputPath = SkNEW(SkString);
         make_output_filepath(outputPath, *outputDir, inputFilename);
     }
 
-    success = renderer.render(outputPath, out);
+    bool success = renderer.render(outputPath, out);
     if (outputPath) {
         if (!success) {
             SkDebugf("Could not write to file %s\n", outputPath->c_str());
@@ -184,31 +214,68 @@ static int MaxByteDiff(uint32_t v1, uint32_t v2) {
                    SkMax32(abs(getByte(v1, 2) - getByte(v2, 2)), abs(getByte(v1, 3) - getByte(v2, 3))));
 }
 
+namespace {
+class AutoRestoreBbhType {
+public:
+    AutoRestoreBbhType() {
+        fRenderer = NULL;
+        fSavedBbhType = sk_tools::PictureRenderer::kNone_BBoxHierarchyType;
+    }
+
+    void set(sk_tools::PictureRenderer* renderer,
+             sk_tools::PictureRenderer::BBoxHierarchyType bbhType) {
+        fRenderer = renderer;
+        fSavedBbhType = renderer->getBBoxHierarchyType();
+        renderer->setBBoxHierarchyType(bbhType);
+    }
+
+    ~AutoRestoreBbhType() {
+        if (NULL != fRenderer) {
+            fRenderer->setBBoxHierarchyType(fSavedBbhType);
+        }
+    }
+
+private:
+    sk_tools::PictureRenderer* fRenderer;
+    sk_tools::PictureRenderer::BBoxHierarchyType fSavedBbhType;
+};
+}
+
 static bool render_picture(const SkString& inputPath, const SkString* outputDir,
-                           sk_tools::PictureRenderer& renderer,
-                           bool validate, int maxComponentDiff,
-                           bool writeWholeImage,
-                           int clones) {
+                           sk_tools::PictureRenderer& renderer) {
     int diffs[256] = {0};
     SkBitmap* bitmap = NULL;
     bool success = render_picture(inputPath,
-        writeWholeImage ? NULL : outputDir,
+        FLAGS_writeWholeImage ? NULL : outputDir,
         renderer,
-        validate || writeWholeImage ? &bitmap : NULL, clones);
+        FLAGS_validate || FLAGS_writeWholeImage ? &bitmap : NULL);
 
-    if (!success || ((validate || writeWholeImage) && bitmap == NULL)) {
+    if (!success || ((FLAGS_validate || FLAGS_writeWholeImage) && bitmap == NULL)) {
         SkDebugf("Failed to draw the picture.\n");
         SkDELETE(bitmap);
         return false;
     }
 
-    if (validate) {
+    if (FLAGS_validate) {
         SkBitmap* referenceBitmap = NULL;
-        sk_tools::SimplePictureRenderer referenceRenderer;
-        success = render_picture(inputPath, NULL, referenceRenderer,
-                                 &referenceBitmap, 0);
+        sk_tools::PictureRenderer* referenceRenderer;
+        // If the renderer uses a BBoxHierarchy, then the reference renderer
+        // will be the same renderer, without the bbh.
+        AutoRestoreBbhType arbbh;
+        if (sk_tools::PictureRenderer::kNone_BBoxHierarchyType !=
+            renderer.getBBoxHierarchyType()) {
+            referenceRenderer = &renderer;
+            referenceRenderer->ref();  // to match auto unref below
+            arbbh.set(referenceRenderer, sk_tools::PictureRenderer::kNone_BBoxHierarchyType);
+        } else {
+            referenceRenderer = SkNEW(sk_tools::SimplePictureRenderer);
+        }
+        SkAutoTUnref<sk_tools::PictureRenderer> aurReferenceRenderer(referenceRenderer);
 
-        if (!success || !referenceBitmap) {
+        success = render_picture(inputPath, NULL, *referenceRenderer,
+                                 &referenceBitmap);
+
+        if (!success || NULL == referenceBitmap || NULL == referenceBitmap->getPixels()) {
             SkDebugf("Failed to draw the reference picture.\n");
             SkDELETE(bitmap);
             SkDELETE(referenceBitmap);
@@ -237,10 +304,10 @@ static bool render_picture(const SkString& inputPath, const SkString* outputDir,
                 SkASSERT(diff >= 0 && diff <= 255);
                 diffs[diff]++;
 
-                if (diff > maxComponentDiff) {
+                if (diff > FLAGS_maxComponentDiff) {
                     SkDebugf("Expected pixel at (%i %i) exceedds maximum "
                                  "component diff of %i: 0x%x, actual 0x%x\n",
-                             x, y, maxComponentDiff,
+                             x, y, FLAGS_maxComponentDiff,
                              *referenceBitmap->getAddr32(x, y),
                              *bitmap->getAddr32(x, y));
                     SkDELETE(bitmap);
@@ -258,9 +325,9 @@ static bool render_picture(const SkString& inputPath, const SkString* outputDir,
         }
     }
 
-    if (writeWholeImage) {
+    if (FLAGS_writeWholeImage) {
         sk_tools::force_all_opaque(*bitmap);
-        if (NULL != outputDir && writeWholeImage) {
+        if (NULL != outputDir && FLAGS_writeWholeImage) {
             SkString inputFilename;
             sk_tools::get_basename(&inputFilename, inputPath);
             SkString outputPath;
@@ -279,462 +346,91 @@ static bool render_picture(const SkString& inputPath, const SkString* outputDir,
 }
 
 
-static int process_input(const SkString& input, const SkString* outputDir,
-                         sk_tools::PictureRenderer& renderer,
-                         bool validate, int maxComponentDiff,
-                         bool writeWholeImage, int clones) {
-    SkOSFile::Iter iter(input.c_str(), "skp");
+static int process_input(const char* input, const SkString* outputDir,
+                         sk_tools::PictureRenderer& renderer) {
+    SkOSFile::Iter iter(input, "skp");
     SkString inputFilename;
     int failures = 0;
-    SkDebugf("process_input, %s\n", input.c_str());
+    SkDebugf("process_input, %s\n", input);
     if (iter.next(&inputFilename)) {
         do {
             SkString inputPath;
-            sk_tools::make_filepath(&inputPath, input, inputFilename);
-            if (!render_picture(inputPath, outputDir, renderer,
-                                validate, maxComponentDiff,
-                                writeWholeImage, clones)) {
+            SkString inputAsSkString(input);
+            sk_tools::make_filepath(&inputPath, inputAsSkString, inputFilename);
+            if (!render_picture(inputPath, outputDir, renderer)) {
                 ++failures;
             }
         } while(iter.next(&inputFilename));
-    } else if (SkStrEndsWith(input.c_str(), ".skp")) {
+    } else if (SkStrEndsWith(input, ".skp")) {
         SkString inputPath(input);
-        if (!render_picture(inputPath, outputDir, renderer,
-                            validate, maxComponentDiff,
-                            writeWholeImage, clones)) {
+        if (!render_picture(inputPath, outputDir, renderer)) {
             ++failures;
         }
     } else {
         SkString warning;
-        warning.printf("Warning: skipping %s\n", input.c_str());
+        warning.printf("Warning: skipping %s\n", input);
         SkDebugf(warning.c_str());
     }
     return failures;
 }
 
-static void parse_commandline(int argc, char* const argv[], SkTArray<SkString>* inputs,
-                              sk_tools::PictureRenderer*& renderer, SkString*& outputDir,
-                              bool* validate, int* maxComponentDiff,
-                              bool* writeWholeImage,
-                              int* clones){
-    const char* argv0 = argv[0];
-    char* const* stop = argv + argc;
-
-    sk_tools::PictureRenderer::SkDeviceTypes deviceType =
-        sk_tools::PictureRenderer::kBitmap_DeviceType;
-
-    bool usePipe = false;
-    int numThreads = 1;
-    bool useTiles = false;
-    const char* widthString = NULL;
-    const char* heightString = NULL;
-    int gridWidth = 0;
-    int gridHeight = 0;
-    bool isPowerOf2Mode = false;
-    bool isCopyMode = false;
-    const char* xTilesString = NULL;
-    const char* yTilesString = NULL;
-    const char* mode = NULL;
-    bool gridSupported = false;
-    sk_tools::PictureRenderer::BBoxHierarchyType bbhType =
-        sk_tools::PictureRenderer::kNone_BBoxHierarchyType;
-    *validate = false;
-    *maxComponentDiff = 256;
-    *writeWholeImage = false;
-    *clones = 0;
-    SkISize viewport;
-    viewport.setEmpty();
-    SkScalar scaleFactor = SK_Scalar1;
-
-    for (++argv; argv < stop; ++argv) {
-        if (0 == strcmp(*argv, "--mode")) {
-            if (renderer != NULL) {
-                renderer->unref();
-                SkDebugf("Cannot combine modes.\n");
-                usage(argv0);
-                exit(-1);
-            }
-
-            ++argv;
-            if (argv >= stop) {
-                SkDebugf("Missing mode for --mode\n");
-                usage(argv0);
-                exit(-1);
-            }
-
-            if (0 == strcmp(*argv, "simple")) {
-                renderer = SkNEW(sk_tools::SimplePictureRenderer);
-            } else if ((0 == strcmp(*argv, "tile")) || (0 == strcmp(*argv, "pow2tile"))
-                       || 0 == strcmp(*argv, "copyTile")) {
-                useTiles = true;
-                mode = *argv;
-
-                if (0 == strcmp(*argv, "pow2tile")) {
-                    isPowerOf2Mode = true;
-                } else if (0 == strcmp(*argv, "copyTile")) {
-                    isCopyMode = true;
-                } else {
-                    gridSupported = true;
-                }
-
-                ++argv;
-                if (argv >= stop) {
-                    SkDebugf("Missing width for --mode %s\n", mode);
-                    usage(argv0);
-                    exit(-1);
-                }
-
-                widthString = *argv;
-                ++argv;
-                if (argv >= stop) {
-                    SkDebugf("Missing height for --mode %s\n", mode);
-                    usage(argv0);
-                    exit(-1);
-                }
-                heightString = *argv;
-            } else if (0 == strcmp(*argv, "rerecord")) {
-                renderer = SkNEW(sk_tools::RecordPictureRenderer);
-            } else {
-                SkDebugf("%s is not a valid mode for --mode\n", *argv);
-                usage(argv0);
-                exit(-1);
-            }
-        } else if (0 == strcmp(*argv, "--bbh")) {
-            ++argv;
-            if (argv >= stop) {
-                SkDebugf("Missing value for --bbh\n");
-                usage(argv0);
-                exit(-1);
-            }
-            if (0 == strcmp(*argv, "none")) {
-                bbhType = sk_tools::PictureRenderer::kNone_BBoxHierarchyType;
-            } else if (0 == strcmp(*argv, "rtree")) {
-                bbhType = sk_tools::PictureRenderer::kRTree_BBoxHierarchyType;
-            } else if (0 == strcmp(*argv, "grid")) {
-                bbhType = sk_tools::PictureRenderer::kTileGrid_BBoxHierarchyType;
-                ++argv;
-                if (argv >= stop) {
-                    SkDebugf("Missing width for --bbh grid\n");
-                    usage(argv0);
-                    exit(-1);
-                }
-                gridWidth = atoi(*argv);
-                ++argv;
-                if (argv >= stop) {
-                    SkDebugf("Missing height for --bbh grid\n");
-                    usage(argv0);
-                    exit(-1);
-                }
-                gridHeight = atoi(*argv);
-            } else {
-                SkDebugf("%s is not a valid value for --bbhType\n", *argv);
-                usage(argv0);
-                exit(-1);;
-            }
-        } else if (0 == strcmp(*argv, "--viewport")) {
-            ++argv;
-            if (argv >= stop) {
-                SkDebugf("Missing width for --viewport\n");
-                usage(argv0);
-                exit(-1);
-            }
-            viewport.fWidth = atoi(*argv);
-            ++argv;
-            if (argv >= stop) {
-                SkDebugf("Missing height for --viewport\n");
-                usage(argv0);
-                exit(-1);
-            }
-            viewport.fHeight = atoi(*argv);
-        } else if (0 == strcmp(*argv, "--scale")) {
-            ++argv;
-            if (argv >= stop) {
-                SkDebugf("Missing scaleFactor for --scale\n");
-                usage(argv0);
-                exit(-1);
-            }
-            scaleFactor = SkDoubleToScalar(atof(*argv));
-        } else if (0 == strcmp(*argv, "--tiles")) {
-            ++argv;
-            if (argv >= stop) {
-                SkDebugf("Missing x for --tiles\n");
-                usage(argv0);
-                exit(-1);
-            }
-            xTilesString = *argv;
-            ++argv;
-            if (argv >= stop) {
-                SkDebugf("Missing y for --tiles\n");
-                usage(argv0);
-                exit(-1);
-            }
-            yTilesString = *argv;
-        } else if (0 == strcmp(*argv, "--pipe")) {
-            usePipe = true;
-        } else if (0 == strcmp(*argv, "--multi")) {
-            ++argv;
-            if (argv >= stop) {
-                SkSafeUnref(renderer);
-                SkDebugf("Missing arg for --multi\n");
-                usage(argv0);
-                exit(-1);
-            }
-            numThreads = atoi(*argv);
-            if (numThreads < 2) {
-                SkSafeUnref(renderer);
-                SkDebugf("Number of threads must be at least 2.\n");
-                usage(argv0);
-                exit(-1);
-            }
-        } else if (0 == strcmp(*argv, "--clone")) {
-            ++argv;
-            if (argv >= stop) {
-                SkSafeUnref(renderer);
-                SkDebugf("Missing arg for --clone\n");
-                usage(argv0);
-                exit(-1);
-            }
-            *clones = atoi(*argv);
-            if (*clones < 0) {
-                SkSafeUnref(renderer);
-                SkDebugf("Number of clones must be at least 0.\n");
-                usage(argv0);
-                exit(-1);
-            }
-        } else if (0 == strcmp(*argv, "--device")) {
-            ++argv;
-            if (argv >= stop) {
-                SkSafeUnref(renderer);
-                SkDebugf("Missing mode for --device\n");
-                usage(argv0);
-                exit(-1);
-            }
-
-            if (0 == strcmp(*argv, "bitmap")) {
-                deviceType = sk_tools::PictureRenderer::kBitmap_DeviceType;
-            }
-#if SK_SUPPORT_GPU
-            else if (0 == strcmp(*argv, "gpu")) {
-                deviceType = sk_tools::PictureRenderer::kGPU_DeviceType;
-            }
-#endif
-            else {
-                SkSafeUnref(renderer);
-                SkDebugf("%s is not a valid mode for --device\n", *argv);
-                usage(argv0);
-                exit(-1);
-            }
-
-        } else if ((0 == strcmp(*argv, "-h")) || (0 == strcmp(*argv, "--help"))) {
-            SkSafeUnref(renderer);
-            usage(argv0);
-            exit(-1);
-        } else if (0 == strcmp(*argv, "-w")) {
-            ++argv;
-            if (argv >= stop) {
-                SkDebugf("Missing output directory for -w\n");
-                usage(argv0);
-                exit(-1);
-            }
-            outputDir = SkNEW_ARGS(SkString, (*argv));
-        } else if (0 == strcmp(*argv, "--validate")) {
-            *validate = true;
-        } else if (0 == strcmp(*argv, "--maxComponentDiff")) {
-            if (!*validate) {
-                SkDebugf("--maxComponentDiff must be used only with --validate\n");
-                usage(argv0);
-                exit(-1);
-            }
-            ++argv;
-            if (argv >= stop) {
-                SkDebugf("Missing arg for --maxComponentDiff\n");
-                usage(argv0);
-                exit(-1);
-            }
-            *maxComponentDiff = atoi(*argv);
-            if (*maxComponentDiff < 0 || *maxComponentDiff > 256) {
-                SkSafeUnref(renderer);
-                SkDebugf("maxComponentDiff: 0 - 256.\n");
-                usage(argv0);
-                exit(-1);
-            }
-        } else if (0 == strcmp(*argv, "--writeWholeImage")) {
-            *writeWholeImage = true;
-        } else {
-            inputs->push_back(SkString(*argv));
-        }
-    }
-
-    if (numThreads > 1 && !useTiles) {
-        SkSafeUnref(renderer);
-        SkDebugf("Multithreaded drawing requires tiled rendering.\n");
-        usage(argv0);
-        exit(-1);
-    }
-
-    if (usePipe && sk_tools::PictureRenderer::kNone_BBoxHierarchyType != bbhType) {
-        SkDebugf("--pipe and --bbh cannot be used together\n");
-        usage(argv0);
-        exit(-1);
-    }
-
-    if (sk_tools::PictureRenderer::kTileGrid_BBoxHierarchyType == bbhType &&
-        !gridSupported) {
-        SkDebugf("'--bbh grid' is not compatible with specified --mode.\n");
-        usage(argv0);
-        exit(-1);
-    }
-
-    if (useTiles) {
-        SkASSERT(NULL == renderer);
-        sk_tools::TiledPictureRenderer* tiledRenderer;
-        if (isCopyMode) {
-            int x, y;
-            if (xTilesString != NULL) {
-                SkASSERT(yTilesString != NULL);
-                x = atoi(xTilesString);
-                y = atoi(yTilesString);
-                if (x <= 0 || y <= 0) {
-                    SkDebugf("--tiles must be given values > 0\n");
-                    usage(argv0);
-                    exit(-1);
-                }
-            } else {
-                x = y = 4;
-            }
-            tiledRenderer = SkNEW_ARGS(sk_tools::CopyTilesRenderer, (x, y));
-        } else if (numThreads > 1) {
-            tiledRenderer = SkNEW_ARGS(sk_tools::MultiCorePictureRenderer, (numThreads));
-        } else {
-            tiledRenderer = SkNEW(sk_tools::TiledPictureRenderer);
-        }
-        if (isPowerOf2Mode) {
-            int minWidth = atoi(widthString);
-            if (!SkIsPow2(minWidth) || minWidth < 0) {
-                tiledRenderer->unref();
-                SkString err;
-                err.printf("-mode %s must be given a width"
-                           " value that is a power of two\n", mode);
-                SkDebugf(err.c_str());
-                usage(argv0);
-                exit(-1);
-            }
-            tiledRenderer->setTileMinPowerOf2Width(minWidth);
-        } else if (sk_tools::is_percentage(widthString)) {
-            if (isCopyMode) {
-                tiledRenderer->unref();
-                SkString err;
-                err.printf("--mode %s does not support percentages.\n", mode);
-                SkDebugf(err.c_str());
-                usage(argv0);
-                exit(-1);
-            }
-            tiledRenderer->setTileWidthPercentage(atof(widthString));
-            if (!(tiledRenderer->getTileWidthPercentage() > 0)) {
-                tiledRenderer->unref();
-                SkDebugf("--mode %s must be given a width percentage > 0\n", mode);
-                usage(argv0);
-                exit(-1);
-            }
-        } else {
-            tiledRenderer->setTileWidth(atoi(widthString));
-            if (!(tiledRenderer->getTileWidth() > 0)) {
-                tiledRenderer->unref();
-                SkDebugf("--mode %s must be given a width > 0\n", mode);
-                usage(argv0);
-                exit(-1);
-            }
-        }
-
-        if (sk_tools::is_percentage(heightString)) {
-            if (isCopyMode) {
-                tiledRenderer->unref();
-                SkString err;
-                err.printf("--mode %s does not support percentages.\n", mode);
-                SkDebugf(err.c_str());
-                usage(argv0);
-                exit(-1);
-            }
-            tiledRenderer->setTileHeightPercentage(atof(heightString));
-            if (!(tiledRenderer->getTileHeightPercentage() > 0)) {
-                tiledRenderer->unref();
-                SkDebugf("--mode %s must be given a height percentage > 0\n", mode);
-                usage(argv0);
-                exit(-1);
-            }
-        } else {
-            tiledRenderer->setTileHeight(atoi(heightString));
-            if (!(tiledRenderer->getTileHeight() > 0)) {
-                tiledRenderer->unref();
-                SkDebugf("--mode %s must be given a height > 0\n", mode);
-                usage(argv0);
-                exit(-1);
-            }
-        }
-        if (numThreads > 1) {
-#if SK_SUPPORT_GPU
-            if (sk_tools::PictureRenderer::kGPU_DeviceType == deviceType) {
-                tiledRenderer->unref();
-                SkDebugf("GPU not compatible with multithreaded tiling.\n");
-                usage(argv0);
-                exit(-1);
-            }
-#endif
-        }
-        renderer = tiledRenderer;
-        if (usePipe) {
-            SkDebugf("Pipe rendering is currently not compatible with tiling.\n"
-                     "Turning off pipe.\n");
-        }
-    } else if (usePipe) {
-        if (renderer != NULL) {
-            renderer->unref();
-            SkDebugf("Pipe is incompatible with other modes.\n");
-            usage(argv0);
-            exit(-1);
-        }
-        renderer = SkNEW(sk_tools::PipePictureRenderer);
-    }
-
-    if (inputs->empty()) {
-        SkSafeUnref(renderer);
-        if (NULL != outputDir) {
-            SkDELETE(outputDir);
-        }
-        usage(argv0);
-        exit(-1);
-    }
-
-    if (NULL == renderer) {
-        renderer = SkNEW(sk_tools::SimplePictureRenderer);
-    }
-
-    renderer->setBBoxHierarchyType(bbhType);
-    renderer->setGridSize(gridWidth, gridHeight);
-    renderer->setViewport(viewport);
-    renderer->setScaleFactor(scaleFactor);
-    renderer->setDeviceType(deviceType);
-}
-
 int tool_main(int argc, char** argv);
 int tool_main(int argc, char** argv) {
+    SkCommandLineFlags::SetUsage("Render .skp files.");
+    SkCommandLineFlags::Parse(argc, argv);
+
+    if (FLAGS_readPath.isEmpty()) {
+        SkDebugf(".skp files or directories are required.\n");
+        exit(-1);
+    }
+
+    if (FLAGS_maxComponentDiff < 0 || FLAGS_maxComponentDiff > 256) {
+        SkDebugf("--maxComponentDiff must be between 0 and 256\n");
+        exit(-1);
+    }
+
+    if (FLAGS_maxComponentDiff != 256 && !FLAGS_validate) {
+        SkDebugf("--maxComponentDiff requires --validate\n");
+        exit(-1);
+    }
+
+    if (FLAGS_clone < 0) {
+        SkDebugf("--clone must be >= 0. Was %i\n", FLAGS_clone);
+        exit(-1);
+    }
+
+    if (FLAGS_writeEncodedImages) {
+        if (FLAGS_writePath.isEmpty()) {
+            SkDebugf("--writeEncodedImages requires --writePath\n");
+            exit(-1);
+        }
+        if (FLAGS_deferImageDecoding) {
+            SkDebugf("--writeEncodedImages is not compatible with --deferImageDecoding\n");
+            exit(-1);
+        }
+    }
+
+    SkString errorString;
+    SkAutoTUnref<sk_tools::PictureRenderer> renderer(parseRenderer(errorString,
+                                                                   kRender_PictureTool));
+    if (errorString.size() > 0) {
+        SkDebugf("%s\n", errorString.c_str());
+    }
+
+    if (renderer.get() == NULL) {
+        exit(-1);
+    }
+
     SkAutoGraphics ag;
-    SkTArray<SkString> inputs;
-    sk_tools::PictureRenderer* renderer = NULL;
-    SkString* outputDir = NULL;
-    bool validate = false;
-    int maxComponentDiff = 256;
-    bool writeWholeImage = false;
-    int clones = 0;
-    parse_commandline(argc, argv, &inputs, renderer, outputDir,
-                      &validate, &maxComponentDiff, &writeWholeImage, &clones);
-    SkASSERT(renderer);
+
+    SkString outputDir;
+    if (FLAGS_writePath.count() == 1) {
+        outputDir.set(FLAGS_writePath[0]);
+    }
 
     int failures = 0;
-    for (int i = 0; i < inputs.count(); i ++) {
-        failures += process_input(inputs[i], outputDir, *renderer,
-                                  validate, maxComponentDiff,
-                                  writeWholeImage, clones);
+    for (int i = 0; i < FLAGS_readPath.count(); i ++) {
+        failures += process_input(FLAGS_readPath[i], &outputDir, *renderer.get());
     }
     if (failures != 0) {
         SkDebugf("Failed to render %i pictures.\n", failures);
@@ -749,10 +445,6 @@ int tool_main(int argc, char** argv) {
     }
 #endif
 #endif
-    if (NULL != outputDir) {
-        SkDELETE(outputDir);
-    }
-    SkDELETE(renderer);
     return 0;
 }
 

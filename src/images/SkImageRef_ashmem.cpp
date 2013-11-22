@@ -134,6 +134,9 @@ bool SkImageRef_ashmem::onDecode(SkImageDecoder* codec, SkStream* stream,
         return this->INHERITED::onDecode(codec, stream, bitmap, config, mode);
     }
 
+    // Ashmem memory is guaranteed to be initialized to 0.
+    codec->setSkipWritingZeroes(true);
+
     AshmemAllocator alloc(&fRec, this->getURI());
 
     codec->setAllocator(&alloc);
@@ -223,9 +226,8 @@ SkImageRef_ashmem::SkImageRef_ashmem(SkFlattenableReadBuffer& buffer)
     fRec.fSize = 0;
     fRec.fPinned = false;
     fCT = NULL;
-    char* uri = buffer.readString();
-    if (uri) {
-        setURI(uri);
-        sk_free(uri);
-    }
+
+    SkString uri;
+    buffer.readString(&uri);
+    this->setURI(uri);
 }

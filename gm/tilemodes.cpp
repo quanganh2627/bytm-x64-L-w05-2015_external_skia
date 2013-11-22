@@ -53,37 +53,47 @@ static void setup(SkPaint* paint, const SkBitmap& bm, bool filter,
 static const SkBitmap::Config gConfigs[] = {
     SkBitmap::kARGB_8888_Config,
     SkBitmap::kRGB_565_Config,
-    SkBitmap::kARGB_4444_Config
 };
-static const int gWidth = 32;
-static const int gHeight = 32;
 
 class TilingGM : public skiagm::GM {
     SkBlurDrawLooper    fLooper;
 public:
-    TilingGM()
-            : fLooper(SkIntToScalar(1), SkIntToScalar(2), SkIntToScalar(2),
-                      0x88000000) {
+    TilingGM(bool powerOfTwoSize)
+            : fLooper(SkIntToScalar(1), SkIntToScalar(2), SkIntToScalar(2), 0x88000000)
+            , fPowerOfTwoSize(powerOfTwoSize) {
     }
 
     SkBitmap    fTexture[SK_ARRAY_COUNT(gConfigs)];
 
 protected:
+
+    enum {
+        kPOTSize = 32,
+        kNPOTSize = 21,
+    };
+
     SkString onShortName() {
-        return SkString("tilemodes");
+        SkString name("tilemodes");
+        if (!fPowerOfTwoSize) {
+            name.append("_npot");
+        }
+        return name;
     }
 
     SkISize onISize() { return SkISize::Make(880, 560); }
 
     virtual void onOnceBeforeDraw() SK_OVERRIDE {
+        int size = fPowerOfTwoSize ? kPOTSize : kNPOTSize;
         for (size_t i = 0; i < SK_ARRAY_COUNT(gConfigs); i++) {
-            makebm(&fTexture[i], gConfigs[i], gWidth, gHeight);
+            makebm(&fTexture[i], gConfigs[i], size, size);
         }
     }
 
     virtual void onDraw(SkCanvas* canvas) SK_OVERRIDE {
 
-        SkRect r = { 0, 0, SkIntToScalar(gWidth*2), SkIntToScalar(gHeight*2) };
+        int size = fPowerOfTwoSize ? kPOTSize : kNPOTSize;
+
+        SkRect r = { 0, 0, SkIntToScalar(size*2), SkIntToScalar(size*2) };
 
         static const char* gConfigNames[] = { "8888", "565", "4444" };
 
@@ -120,6 +130,12 @@ protected:
                 for (size_t kx = 0; kx < SK_ARRAY_COUNT(gModes); kx++) {
                     for (size_t ky = 0; ky < SK_ARRAY_COUNT(gModes); ky++) {
                         SkPaint paint;
+#if 1 // Temporary change to regen bitmap before each draw. This may help tracking down an issue
+      // on SGX where resizing NPOT textures to POT textures exhibits a driver bug.
+                        if (!fPowerOfTwoSize) {
+                            makebm(&fTexture[i], gConfigs[i], size, size);
+                        }
+#endif
                         setup(&paint, fTexture[i], gFilters[j], gModes[kx], gModes[ky]);
                         paint.setDither(true);
 
@@ -146,8 +162,12 @@ protected:
     }
 
 private:
+    bool fPowerOfTwoSize;
     typedef skiagm::GM INHERITED;
 };
+
+static const int gWidth = 32;
+static const int gHeight = 32;
 
 static SkShader* make_bm(SkShader::TileMode tx, SkShader::TileMode ty) {
     SkBitmap bm;
@@ -249,11 +269,7 @@ private:
 
 //////////////////////////////////////////////////////////////////////////////
 
-static skiagm::GM* MyFactory(void*) { return new TilingGM; }
-static skiagm::GMRegistry reg(MyFactory);
-
-static skiagm::GM* MyFactory2(void*) { return new Tiling2GM(make_bm, "bitmap"); }
-static skiagm::GMRegistry reg2(MyFactory2);
-
-static skiagm::GM* MyFactory3(void*) { return new Tiling2GM(make_grad, "gradient"); }
-static skiagm::GMRegistry reg3(MyFactory3);
+DEF_GM( return new TilingGM(true); )
+DEF_GM( return new TilingGM(false); )
+DEF_GM( return new Tiling2GM(make_bm, "bitmap"); )
+DEF_GM( return new Tiling2GM(make_grad, "gradient"); )

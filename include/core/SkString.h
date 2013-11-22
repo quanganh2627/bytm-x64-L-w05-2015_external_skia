@@ -12,6 +12,8 @@
 
 #include "SkScalar.h"
 
+#include <stdarg.h>
+
 /*  Some helper functions for C strings
 */
 
@@ -33,7 +35,7 @@ int SkStrStartsWithOneOf(const char string[], const char prefixes[]);
 static int SkStrFind(const char string[], const char substring[]) {
     const char *first = strstr(string, substring);
     if (NULL == first) return -1;
-    return first - &(string[0]);
+    return SkToS32(first - &string[0]);
 }
 
 static bool SkStrContains(const char string[], const char substring[]) {
@@ -51,15 +53,20 @@ static bool SkStrContains(const char string[], const char subchar) {
 
 static inline char *SkStrDup(const char string[]) {
     char *ret = (char *) sk_malloc_throw(strlen(string)+1);
-    memcpy(ret,string,strlen(string));
+    memcpy(ret,string,strlen(string)+1);
     return ret;
 }
 
 
 
-#define SkStrAppendS32_MaxSize  11
+#define SkStrAppendU32_MaxSize  10
+char*   SkStrAppendU32(char buffer[], uint32_t);
+#define SkStrAppendU64_MaxSize  20
+char*   SkStrAppendU64(char buffer[], uint64_t, int minDigits);
+
+#define SkStrAppendS32_MaxSize  (SkStrAppendU32_MaxSize + 1)
 char*   SkStrAppendS32(char buffer[], int32_t);
-#define SkStrAppendS64_MaxSize  20
+#define SkStrAppendS64_MaxSize  (SkStrAppendU64_MaxSize + 1)
 char*   SkStrAppendS64(char buffer[], int64_t, int minDigits);
 
 /**
@@ -162,6 +169,8 @@ public:
     void insertUnichar(size_t offset, SkUnichar);
     void insertS32(size_t offset, int32_t value);
     void insertS64(size_t offset, int64_t value, int minDigits = 0);
+    void insertU32(size_t offset, uint32_t value);
+    void insertU64(size_t offset, uint64_t value, int minDigits = 0);
     void insertHex(size_t offset, uint32_t value, int minDigits = 0);
     void insertScalar(size_t offset, SkScalar);
 
@@ -171,6 +180,8 @@ public:
     void appendUnichar(SkUnichar uni) { this->insertUnichar((size_t)-1, uni); }
     void appendS32(int32_t value) { this->insertS32((size_t)-1, value); }
     void appendS64(int64_t value, int minDigits = 0) { this->insertS64((size_t)-1, value, minDigits); }
+    void appendU32(uint32_t value) { this->insertU32((size_t)-1, value); }
+    void appendU64(uint64_t value, int minDigits = 0) { this->insertU64((size_t)-1, value, minDigits); }
     void appendHex(uint32_t value, int minDigits = 0) { this->insertHex((size_t)-1, value, minDigits); }
     void appendScalar(SkScalar value) { this->insertScalar((size_t)-1, value); }
 
@@ -185,6 +196,7 @@ public:
 
     void printf(const char format[], ...) SK_PRINTF_LIKE(2, 3);
     void appendf(const char format[], ...) SK_PRINTF_LIKE(2, 3);
+    void appendf(const char format[], va_list);
     void prependf(const char format[], ...) SK_PRINTF_LIKE(2, 3);
 
     void remove(size_t offset, size_t length);
@@ -202,7 +214,7 @@ public:
 private:
     struct Rec {
     public:
-        size_t      fLength;
+        uint32_t    fLength; // logically size_t, but we want it to stay 32bits
         int32_t     fRefCnt;
         char        fBeginningOfData;
 
@@ -243,5 +255,11 @@ private:
 
 /// Creates a new string and writes into it using a printf()-style format.
 SkString SkStringPrintf(const char* format, ...);
+
+// Specialized to take advantage of SkString's fast swap path. The unspecialized function is
+// declared in SkTypes.h and called by SkTSort.
+template <> inline void SkTSwap(SkString& a, SkString& b) {
+    a.swap(b);
+}
 
 #endif

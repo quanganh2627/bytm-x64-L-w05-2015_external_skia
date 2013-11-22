@@ -9,9 +9,11 @@
 #include "picture_utils.h"
 #include "SamplePipeControllers.h"
 #include "SkCanvas.h"
+#include "SkData.h"
 #include "SkDevice.h"
 #include "SkGPipe.h"
 #if SK_SUPPORT_GPU
+#include "gl/GrGLDefines.h"
 #include "SkGpuDevice.h"
 #endif
 #include "SkGraphics.h"
@@ -19,6 +21,8 @@
 #include "SkMaskFilter.h"
 #include "SkMatrix.h"
 #include "SkPicture.h"
+#include "SkPictureUtils.h"
+#include "SkPixelRef.h"
 #include "SkRTree.h"
 #include "SkScalar.h"
 #include "SkStream.h"
@@ -28,8 +32,6 @@
 #include "SkTDArray.h"
 #include "SkThreadUtils.h"
 #include "SkTypes.h"
-#include "SkData.h"
-#include "SkPictureUtils.h"
 
 namespace sk_tools {
 
@@ -62,10 +64,9 @@ public:
 
     virtual bool filter(SkPaint* paint, Type t) {
         paint->setFlags(paint->getFlags() & ~fFlags[t] & SkPaint::kAllFlags);
-        if (PictureRenderer::kBlur_DrawFilterFlag & fFlags[t]) {
+        if (PictureRenderer::kMaskFilter_DrawFilterFlag & fFlags[t]) {
             SkMaskFilter* maskFilter = paint->getMaskFilter();
-            SkMaskFilter::BlurInfo blurInfo;
-            if (maskFilter && maskFilter->asABlur(&blurInfo)) {
+            if (NULL != maskFilter) {
                 paint->setMaskFilter(NULL);
             }
         }
@@ -106,13 +107,31 @@ SkCanvas* PictureRenderer::setupCanvas(int width, int height) {
         }
         break;
 #if SK_SUPPORT_GPU
+#if SK_ANGLE
+        case kAngle_DeviceType:
+            // fall through
+#endif
         case kGPU_DeviceType: {
-            SkAutoTUnref<SkGpuDevice> device(SkNEW_ARGS(SkGpuDevice,
-                                                    (fGrContext, SkBitmap::kARGB_8888_Config,
-                                                    width, height)));
+            SkAutoTUnref<GrSurface> target;
+            if (fGrContext) {
+                // create a render target to back the device
+                GrTextureDesc desc;
+                desc.fConfig = kSkia8888_GrPixelConfig;
+                desc.fFlags = kRenderTarget_GrTextureFlagBit;
+                desc.fWidth = width;
+                desc.fHeight = height;
+                desc.fSampleCnt = fSampleCount;
+                target.reset(fGrContext->createUncachedTexture(desc, NULL, 0));
+            }
+            if (NULL == target.get()) {
+                SkASSERT(0);
+                return NULL;
+            }
+
+            SkAutoTUnref<SkGpuDevice> device(SkGpuDevice::Create(target));
             canvas = SkNEW_ARGS(SkCanvas, (device.get()));
+            break;
         }
-        break;
 #endif
         default:
             SkASSERT(0);
@@ -139,7 +158,7 @@ void PictureRenderer::end() {
 
 int PictureRenderer::getViewWidth() {
     SkASSERT(fPicture != NULL);
-    int width = fPicture->width();
+    int width = SkScalarCeilToInt(fPicture->width() * fScaleFactor);
     if (fViewport.width() > 0) {
         width = SkMin32(width, fViewport.width());
     }
@@ -148,7 +167,7 @@ int PictureRenderer::getViewWidth() {
 
 int PictureRenderer::getViewHeight() {
     SkASSERT(fPicture != NULL);
-    int height = fPicture->height();
+    int height = SkScalarCeilToInt(fPicture->height() * fScaleFactor);
     if (fViewport.height() > 0) {
         height = SkMin32(height, fViewport.height());
     }
@@ -174,19 +193,15 @@ void PictureRenderer::buildBBoxHierarchy() {
 
 void PictureRenderer::resetState(bool callFinish) {
 #if SK_SUPPORT_GPU
-    if (this->isUsingGpuDevice()) {
-        SkGLContext* glContext = fGrContextFactory.getGLContext(
-            GrContextFactory::kNative_GLContextType);
+    SkGLContextHelper* glContext = this->getGLContext();
+    if (NULL == glContext) {
+        SkASSERT(kBitmap_DeviceType == fDeviceType);
+        return;
+    }
 
-        SkASSERT(glContext != NULL);
-        if (NULL == glContext) {
-            return;
-        }
-
-        fGrContext->flush();
-        if (callFinish) {
-            SK_GL(*glContext, Finish());
-        }
+    fGrContext->flush();
+    if (callFinish) {
+        SK_GL(*glContext, Finish());
     }
 #endif
 }
@@ -242,8 +257,17 @@ SkCanvas* RecordPictureRenderer::setupCanvas(int width, int height) {
     return NULL;
 }
 
-static bool PNGEncodeBitmapToStream(SkWStream* wStream, const SkBitmap& bm) {
-    return SkImageEncoder::EncodeStream(wStream, bm, SkImageEncoder::kPNG_Type, 100);
+static SkData* encode_bitmap_to_data(size_t* offset, const SkBitmap& bm) {
+    SkPixelRef* pr = bm.pixelRef();
+    if (pr != NULL) {
+        SkData* data = pr->refEncodedData();
+        if (data != NULL) {
+            *offset = bm.pixelRefOffset();
+            return data;
+        }
+    }
+    *offset = 0;
+    return SkImageEncoder::EncodeData(bm, SkImageEncoder::kPNG_Type, 100);
 }
 
 bool RecordPictureRenderer::render(const SkString* path, SkBitmap** out) {
@@ -259,7 +283,7 @@ bool RecordPictureRenderer::render(const SkString* path, SkBitmap** out) {
         // ".skp" was removed from 'path' before being passed in here.
         skpPath.append(".skp");
         SkFILEWStream stream(skpPath.c_str());
-        replayer->serialize(&stream, &PNGEncodeBitmapToStream);
+        replayer->serialize(&stream, &encode_bitmap_to_data);
         return true;
     }
     return false;
@@ -778,8 +802,8 @@ SkPicture* PictureRenderer::createPicture() {
         case kRTree_BBoxHierarchyType:
             return SkNEW(RTreePicture);
         case kTileGrid_BBoxHierarchyType:
-            return SkNEW_ARGS(SkTileGridPicture, (fGridWidth, fGridHeight, fPicture->width(),
-                fPicture->height()));
+            return SkNEW_ARGS(SkTileGridPicture, (fPicture->width(),
+                fPicture->height(), fGridInfo));
     }
     SkASSERT(0); // invalid bbhType
     return NULL;

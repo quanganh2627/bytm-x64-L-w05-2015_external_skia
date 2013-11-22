@@ -56,7 +56,7 @@ struct SkAAClip::YOffset {
 struct SkAAClip::RunHead {
     int32_t fRefCnt;
     int32_t fRowCount;
-    int32_t fDataSize;
+    size_t  fDataSize;
 
     YOffset* yoffsets() {
         return (YOffset*)((char*)this + sizeof(RunHead));
@@ -135,6 +135,7 @@ SkAAClip::Iter::Iter(const SkAAClip& clip) {
         fDone = true;
         fTop = fBottom = clip.fBounds.fBottom;
         fData = NULL;
+        fCurrYOff = NULL;
         fStopYOff = NULL;
         return;
     }
@@ -193,7 +194,6 @@ void SkAAClip::validate() const {
     const RunHead* head = fRunHead;
     SkASSERT(head->fRefCnt > 0);
     SkASSERT(head->fRowCount > 0);
-    SkASSERT(head->fDataSize > 0);
 
     const YOffset* yoff = head->yoffsets();
     const YOffset* ystop = yoff + head->fRowCount;
@@ -210,7 +210,7 @@ void SkAAClip::validate() const {
         prevOffset = yoff->fOffset;
         const uint8_t* row = head->data() + yoff->fOffset;
         size_t rowLength = compute_row_length(row, fBounds.width());
-        SkASSERT(yoff->fOffset + rowLength <= (size_t) head->fDataSize);
+        SkASSERT(yoff->fOffset + rowLength <= head->fDataSize);
         yoff += 1;
     }
     // check the last entry;

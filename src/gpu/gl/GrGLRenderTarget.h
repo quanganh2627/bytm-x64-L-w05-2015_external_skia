@@ -25,12 +25,14 @@ public:
     enum { kUnresolvableFBOID = 0 };
 
     struct Desc {
-        GrGLuint      fRTFBOID;
-        GrGLuint      fTexFBOID;
-        GrGLuint      fMSColorRenderbufferID;
-        bool          fIsWrapped;
-        GrPixelConfig fConfig;
-        int           fSampleCnt;
+        GrGLuint         fRTFBOID;
+        GrGLuint         fTexFBOID;
+        GrGLuint         fMSColorRenderbufferID;
+        bool             fIsWrapped;
+        GrPixelConfig    fConfig;
+        int              fSampleCnt;
+        GrSurfaceOrigin  fOrigin;
+        bool             fCheckAllocation;
     };
 
     // creates a GrGLRenderTarget associated with a texture
@@ -95,7 +97,7 @@ private:
     GrGLIRect fViewport;
 
     // non-NULL if this RT was created by Gr with an associated GrGLTexture.
-    GrGLTexID* fTexIDObj;
+    SkAutoTUnref<GrGLTexID> fTexIDObj;
 
     void init(const Desc& desc, const GrGLIRect& viewport, GrGLTexID* texID);
 

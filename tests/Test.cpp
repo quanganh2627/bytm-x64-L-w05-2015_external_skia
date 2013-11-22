@@ -7,7 +7,10 @@
  */
 #include "Test.h"
 
-#include "SkTLazy.h"
+#include "SkString.h"
+#include "SkTArray.h"
+#include "SkTime.h"
+#include "SkError.h"
 
 #if SK_SUPPORT_GPU
 #include "GrContext.h"
@@ -20,44 +23,25 @@ SK_DEFINE_INST_COUNT(skiatest::Reporter)
 
 using namespace skiatest;
 
-Reporter::Reporter() {
-    this->resetReporting();
-}
-
-void Reporter::resetReporting() {
-    fCurrTest = NULL;
-    fTestCount = 0;
-    sk_bzero(fResultCount, sizeof(fResultCount));
+Reporter::Reporter() : fTestCount(0) {
 }
 
 void Reporter::startTest(Test* test) {
-    SkASSERT(NULL == fCurrTest);
-    fCurrTest = test;
+    this->bumpTestCount();
     this->onStart(test);
-    fTestCount += 1;
-    fCurrTestSuccess = true;    // we're optimistic
 }
 
-void Reporter::report(const char desc[], Result result) {
-    if (NULL == desc) {
-        desc = "<no description>";
-    }
-    this->onReport(desc, result);
-    fResultCount[result] += 1;
-    if (kFailed == result) {
-        fCurrTestSuccess = false;
-    }
+void Reporter::reportFailed(const SkString& desc) {
+    this->onReportFailed(desc);
 }
 
 void Reporter::endTest(Test* test) {
-    SkASSERT(test == fCurrTest);
     this->onEnd(test);
-    fCurrTest = NULL;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-Test::Test() : fReporter(NULL) {}
+Test::Test() : fReporter(NULL), fPassed(true) {}
 
 Test::~Test() {
     SkSafeUnref(fReporter);
@@ -74,43 +58,83 @@ const char* Test::getName() {
     return fName.c_str();
 }
 
-bool Test::run() {
+namespace {
+    class LocalReporter : public Reporter {
+    public:
+        explicit LocalReporter(Reporter* reporterToMimic) : fReporter(reporterToMimic) {}
+
+        int failure_size() const { return fFailures.count(); }
+        const SkString& failure(int i) const { return fFailures[i]; }
+
+    protected:
+        void onReportFailed(const SkString& desc) SK_OVERRIDE {
+            fFailures.push_back(desc);
+        }
+
+        // Proxy down to fReporter.  We assume these calls are threadsafe.
+        virtual bool allowExtendedTest() const SK_OVERRIDE {
+            return fReporter->allowExtendedTest();
+        }
+
+        virtual bool allowThreaded() const SK_OVERRIDE {
+            return fReporter->allowThreaded();
+        }
+
+        virtual void bumpTestCount() SK_OVERRIDE {
+            fReporter->bumpTestCount();
+        }
+
+        virtual bool verbose() const SK_OVERRIDE {
+            return fReporter->verbose();
+        }
+
+    private:
+        Reporter* fReporter;  // Unowned.
+        SkTArray<SkString> fFailures;
+    };
+}  // namespace
+
+void Test::run() {
+    // Clear the Skia error callback before running any test, to ensure that tests
+    // don't have unintended side effects when running more than one.
+    SkSetErrorCallback( NULL, NULL );
+
+    // Tell (likely shared) fReporter that this test has started.
     fReporter->startTest(this);
-    this->onRun(fReporter);
+
+    const SkMSec start = SkTime::GetMSecs();
+    // Run the test into a LocalReporter so we know if it's passed or failed without interference
+    // from other tests that might share fReporter.
+    LocalReporter local(fReporter);
+    this->onRun(&local);
+    fPassed = local.failure_size() == 0;
+    fElapsed = SkTime::GetMSecs() - start;
+
+    // Now tell fReporter about any failures and wrap up.
+    for (int i = 0; i < local.failure_size(); i++) {
+      fReporter->reportFailed(local.failure(i));
+    }
     fReporter->endTest(this);
-    return fReporter->getCurrSuccess();
+
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
 #if SK_SUPPORT_GPU
-    static SkAutoTUnref<SkNativeGLContext> gGLContext;
-    static SkAutoTUnref<GrContext> gGrContext;
+#include "GrContextFactory.h"
+GrContextFactory gGrContextFactory;
 #endif
 
-void GpuTest::DestroyContext() {
+GrContextFactory* GpuTest::GetGrContextFactory() {
 #if SK_SUPPORT_GPU
-    // preserve this order, we want gGrContext destroyed before gGLContext
-    gGrContext.reset(NULL);
-    gGLContext.reset(NULL);
+    return &gGrContextFactory;
+#else
+    return NULL;
 #endif
 }
 
-
-GrContext* GpuTest::GetContext() {
+void GpuTest::DestroyContexts() {
 #if SK_SUPPORT_GPU
-    if (NULL == gGrContext.get()) {
-        gGLContext.reset(new SkNativeGLContext());
-        if (gGLContext.get()->init(800, 600)) {
-            GrBackendContext ctx = reinterpret_cast<GrBackendContext>(gGLContext.get()->gl());
-            gGrContext.reset(GrContext::Create(kOpenGL_GrBackend, ctx));
-        }
-    }
-    if (gGLContext.get()) {
-        gGLContext.get()->makeCurrent();
-    }
-    return gGrContext.get();
-#else
-    return NULL;
+    gGrContextFactory.destroyContexts();
 #endif
 }

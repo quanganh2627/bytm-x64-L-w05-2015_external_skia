@@ -4,6 +4,7 @@
 #include "SkColorPriv.h"
 #include "SkFlattenableBuffers.h"
 #include "SkUnPreMultiply.h"
+#include "SkString.h"
 
 class SkTable_ColorFilter : public SkColorFilter {
 public:
@@ -46,6 +47,8 @@ public:
 
     virtual void filterSpan(const SkPMColor src[], int count,
                             SkPMColor dst[]) const SK_OVERRIDE;
+
+    SkDEVCODE(virtual void toString(SkString* str) const SK_OVERRIDE;)
 
     SK_DECLARE_PUBLIC_FLATTENABLE_DESERIALIZATION_PROCS(SkTable_ColorFilter)
 
@@ -147,6 +150,12 @@ void SkTable_ColorFilter::filterSpan(const SkPMColor src[], int count,
                                          tableG[g], tableB[b]);
     }
 }
+
+#ifdef SK_DEVELOPER
+void SkTable_ColorFilter::toString(SkString* str) const {
+    str->append("SkTable_ColorFilter");
+}
+#endif
 
 static const uint8_t gCountNibBits[] = {
     0, 1, 1, 2,
@@ -256,75 +265,72 @@ private:
 
 class GLColorTableEffect : public GrGLEffect {
 public:
-    GLColorTableEffect(const GrBackendEffectFactory&, const GrEffectRef&);
+    GLColorTableEffect(const GrBackendEffectFactory&, const GrDrawEffect&);
 
     virtual void emitCode(GrGLShaderBuilder*,
-                          const GrEffectStage&,
+                          const GrDrawEffect&,
                           EffectKey,
-                          const char* vertexCoords,
                           const char* outputColor,
                           const char* inputColor,
                           const TextureSamplerArray&) SK_OVERRIDE;
 
-    virtual void setData(const GrGLUniformManager&, const GrEffectStage&) SK_OVERRIDE {}
+    virtual void setData(const GrGLUniformManager&, const GrDrawEffect&) SK_OVERRIDE {}
 
-    static EffectKey GenKey(const GrEffectStage&, const GrGLCaps&);
+    static EffectKey GenKey(const GrDrawEffect&, const GrGLCaps&);
 
 private:
 
     typedef GrGLEffect INHERITED;
 };
 
-GLColorTableEffect::GLColorTableEffect(const GrBackendEffectFactory& factory, const GrEffectRef&)
+GLColorTableEffect::GLColorTableEffect(const GrBackendEffectFactory& factory, const GrDrawEffect&)
     : INHERITED(factory) {
  }
 
 void GLColorTableEffect::emitCode(GrGLShaderBuilder* builder,
-                                  const GrEffectStage&,
+                                  const GrDrawEffect&,
                                   EffectKey,
-                                  const char* vertexCoords,
                                   const char* outputColor,
                                   const char* inputColor,
                                   const TextureSamplerArray& samplers) {
 
     static const float kColorScaleFactor = 255.0f / 256.0f;
     static const float kColorOffsetFactor = 1.0f / 512.0f;
-    SkString* code = &builder->fFSCode;
     if (NULL == inputColor) {
         // the input color is solid white (all ones).
         static const float kMaxValue = kColorScaleFactor + kColorOffsetFactor;
-        code->appendf("\t\tvec4 coord = vec4(%f, %f, %f, %f);\n",
-                      kMaxValue, kMaxValue, kMaxValue, kMaxValue);
+        builder->fsCodeAppendf("\t\tvec4 coord = vec4(%f, %f, %f, %f);\n",
+                               kMaxValue, kMaxValue, kMaxValue, kMaxValue);
 
     } else {
-        code->appendf("\t\tfloat nonZeroAlpha = max(%s.a, .0001);\n", inputColor);
-        code->appendf("\t\tvec4 coord = vec4(%s.rgb / nonZeroAlpha, nonZeroAlpha);\n", inputColor);
-        code->appendf("\t\tcoord = coord * %f + vec4(%f, %f, %f, %f);\n",
-                      kColorScaleFactor,
-                      kColorOffsetFactor, kColorOffsetFactor,
-                      kColorOffsetFactor, kColorOffsetFactor);
+        builder->fsCodeAppendf("\t\tfloat nonZeroAlpha = max(%s.a, .0001);\n", inputColor);
+        builder->fsCodeAppendf("\t\tvec4 coord = vec4(%s.rgb / nonZeroAlpha, nonZeroAlpha);\n", inputColor);
+        builder->fsCodeAppendf("\t\tcoord = coord * %f + vec4(%f, %f, %f, %f);\n",
+                              kColorScaleFactor,
+                              kColorOffsetFactor, kColorOffsetFactor,
+                              kColorOffsetFactor, kColorOffsetFactor);
     }
 
-    code->appendf("\t\t%s.a = ", outputColor);
-    builder->appendTextureLookup(code, samplers[0], "vec2(coord.a, 0.125)");
-    code->append(";\n");
+    builder->fsCodeAppendf("\t\t%s.a = ", outputColor);
+    builder->appendTextureLookup(GrGLShaderBuilder::kFragment_ShaderType, samplers[0], "vec2(coord.a, 0.125)");
+    builder->fsCodeAppend(";\n");
 
-    code->appendf("\t\t%s.r = ", outputColor);
-    builder->appendTextureLookup(code, samplers[0], "vec2(coord.r, 0.375)");
-    code->append(";\n");
+    builder->fsCodeAppendf("\t\t%s.r = ", outputColor);
+    builder->appendTextureLookup(GrGLShaderBuilder::kFragment_ShaderType, samplers[0], "vec2(coord.r, 0.375)");
+    builder->fsCodeAppend(";\n");
 
-    code->appendf("\t\t%s.g = ", outputColor);
-    builder->appendTextureLookup(code, samplers[0], "vec2(coord.g, 0.625)");
-    code->append(";\n");
+    builder->fsCodeAppendf("\t\t%s.g = ", outputColor);
+    builder->appendTextureLookup(GrGLShaderBuilder::kFragment_ShaderType, samplers[0], "vec2(coord.g, 0.625)");
+    builder->fsCodeAppend(";\n");
 
-    code->appendf("\t\t%s.b = ", outputColor);
-    builder->appendTextureLookup(code, samplers[0], "vec2(coord.b, 0.875)");
-    code->append(";\n");
+    builder->fsCodeAppendf("\t\t%s.b = ", outputColor);
+    builder->appendTextureLookup(GrGLShaderBuilder::kFragment_ShaderType, samplers[0], "vec2(coord.b, 0.875)");
+    builder->fsCodeAppend(";\n");
 
-    code->appendf("\t\t%s.rgb *= %s.a;\n", outputColor, outputColor);
+    builder->fsCodeAppendf("\t\t%s.rgb *= %s.a;\n", outputColor, outputColor);
 }
 
-GrGLEffect::EffectKey GLColorTableEffect::GenKey(const GrEffectStage&, const GrGLCaps&) {
+GrGLEffect::EffectKey GLColorTableEffect::GenKey(const GrDrawEffect&, const GrGLCaps&) {
     return 0;
 }
 
@@ -351,16 +357,16 @@ void ColorTableEffect::getConstantColorComponents(GrColor* color, uint32_t* vali
     // If we kept the table in the effect then we could actually run known inputs through the
     // table.
     if (fFlags & SkTable_ColorFilter::kR_Flag) {
-        *validFlags &= ~kR_ValidComponentFlag;
+        *validFlags &= ~kR_GrColorComponentFlag;
     }
     if (fFlags & SkTable_ColorFilter::kG_Flag) {
-        *validFlags &= ~kG_ValidComponentFlag;
+        *validFlags &= ~kG_GrColorComponentFlag;
     }
     if (fFlags & SkTable_ColorFilter::kB_Flag) {
-        *validFlags &= ~kB_ValidComponentFlag;
+        *validFlags &= ~kB_GrColorComponentFlag;
     }
     if (fFlags & SkTable_ColorFilter::kA_Flag) {
-        *validFlags &= ~kA_ValidComponentFlag;
+        *validFlags &= ~kA_GrColorComponentFlag;
     }
 }
 
@@ -369,8 +375,9 @@ void ColorTableEffect::getConstantColorComponents(GrColor* color, uint32_t* vali
 
 GR_DEFINE_EFFECT_TEST(ColorTableEffect);
 
-GrEffectRef* ColorTableEffect::TestCreate(SkRandom* random,
+GrEffectRef* ColorTableEffect::TestCreate(SkMWCRandom* random,
                                           GrContext* context,
+                                          const GrDrawTargetCaps&,
                                           GrTexture* textures[]) {
     static unsigned kAllFlags = SkTable_ColorFilter::kR_Flag | SkTable_ColorFilter::kG_Flag |
                                 SkTable_ColorFilter::kB_Flag | SkTable_ColorFilter::kA_Flag;
@@ -379,15 +386,18 @@ GrEffectRef* ColorTableEffect::TestCreate(SkRandom* random,
 
 GrEffectRef* SkTable_ColorFilter::asNewEffect(GrContext* context) const {
     SkBitmap bitmap;
+    GrEffectRef* effect = NULL;
     this->asComponentTable(&bitmap);
     // passing NULL because this effect does no tiling or filtering.
     GrTexture* texture = GrLockAndRefCachedBitmapTexture(context, bitmap, NULL);
-    GrEffectRef* effect = ColorTableEffect::Create(texture, fFlags);
+    if (NULL != texture) {
+        effect = ColorTableEffect::Create(texture, fFlags);
 
-    // Unlock immediately, this is not great, but we don't have a way of
-    // knowing when else to unlock it currently. TODO: Remove this when
-    // unref becomes the unlock replacement for all types of textures.
-    GrUnlockAndUnrefCachedBitmapTexture(texture);
+        // Unlock immediately, this is not great, but we don't have a way of
+        // knowing when else to unlock it currently. TODO: Remove this when
+        // unref becomes the unlock replacement for all types of textures.
+        GrUnlockAndUnrefCachedBitmapTexture(texture);
+    }
     return effect;
 }
 

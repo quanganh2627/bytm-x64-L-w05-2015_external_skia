@@ -195,12 +195,6 @@ typedef intptr_t GrBackendContext;
 ///////////////////////////////////////////////////////////////////////////////
 
 /**
- * Type used to describe format of vertices in arrays
- * Values are defined in GrDrawTarget
- */
-typedef int GrVertexLayout;
-
-/**
 * Geometric primitives used for drawing.
 */
 enum GrPrimitiveType {
@@ -290,50 +284,24 @@ enum GrPixelConfig {
      */
     kBGRA_8888_GrPixelConfig,
 
-    kGrPixelConfigCount
+    kLast_GrPixelConfig = kBGRA_8888_GrPixelConfig
 };
+static const int kGrPixelConfigCnt = kLast_GrPixelConfig + 1;
 
 // Aliases for pixel configs that match skia's byte order.
 #ifndef SK_CPU_LENDIAN
     #error "Skia gpu currently assumes little endian"
 #endif
-#if 24 == SK_A32_SHIFT && 16 == SK_R32_SHIFT && \
-     8 == SK_G32_SHIFT &&  0 == SK_B32_SHIFT
+#if SK_PMCOLOR_BYTE_ORDER(B,G,R,A)
     static const GrPixelConfig kSkia8888_GrPixelConfig = kBGRA_8888_GrPixelConfig;
-#elif 24 == SK_A32_SHIFT && 16 == SK_B32_SHIFT && \
-       8 == SK_G32_SHIFT &&  0 == SK_R32_SHIFT
+#elif SK_PMCOLOR_BYTE_ORDER(R,G,B,A)
     static const GrPixelConfig kSkia8888_GrPixelConfig = kRGBA_8888_GrPixelConfig;
 #else
     #error "SK_*32_SHIFT values must correspond to GL_BGRA or GL_RGBA format."
 #endif
 
-// This alias is deprecated and will be removed.
-static const GrPixelConfig kSkia8888_PM_GrPixelConfig = kSkia8888_GrPixelConfig;
-
-// Returns true if the pixel config has 8bit r,g,b,a components in that byte
-// order
-static inline bool GrPixelConfigIsRGBA8888(GrPixelConfig config) {
-    switch (config) {
-        case kRGBA_8888_GrPixelConfig:
-            return true;
-        default:
-            return false;
-    }
-}
-
-// Returns true if the pixel config has 8bit b,g,r,a components in that byte
-// order
-static inline bool GrPixelConfigIsBGRA8888(GrPixelConfig config) {
-    switch (config) {
-        case kBGRA_8888_GrPixelConfig:
-            return true;
-        default:
-            return false;
-    }
-}
-
 // Returns true if the pixel config is 32 bits per pixel
-static inline bool GrPixelConfigIs32Bit(GrPixelConfig config) {
+static inline bool GrPixelConfigIs8888(GrPixelConfig config) {
     switch (config) {
         case kRGBA_8888_GrPixelConfig:
         case kBGRA_8888_GrPixelConfig:
@@ -411,6 +379,11 @@ enum GrTextureFlags {
      * Hint that the CPU may modify this texture after creation.
      */
     kDynamicUpdate_GrTextureFlagBit = 0x4,
+    /**
+     * Indicates that all allocations (color buffer, FBO completeness, etc)
+     * should be verified.
+     */
+    kCheckAllocation_GrTextureFlagBit  = 0x8,
 
     kDummy_GrTextureFlagBit,
     kLastPublic_GrTextureFlagBit = kDummy_GrTextureFlagBit-1,
@@ -428,13 +401,14 @@ enum {
 /**
  * Some textures will be stored such that the upper and left edges of the content meet at the
  * the origin (in texture coord space) and for other textures the lower and left edges meet at
- * the origin. Render-targets are always consistent with the convention of the underlying
- * backend API to make it easier to mix native backend rendering with Skia rendering.
+ * the origin. kDefault_GrSurfaceOrigin sets textures to TopLeft, and render targets
+ * to BottomLeft.
  */
 
 enum GrSurfaceOrigin {
-    kBottomLeft_GrSurfaceOrigin,
+    kDefault_GrSurfaceOrigin,         // DEPRECATED; to be removed
     kTopLeft_GrSurfaceOrigin,
+    kBottomLeft_GrSurfaceOrigin,
 };
 
 /**
@@ -443,6 +417,7 @@ enum GrSurfaceOrigin {
 struct GrTextureDesc {
     GrTextureDesc()
     : fFlags(kNone_GrTextureFlags)
+    , fOrigin(kDefault_GrSurfaceOrigin)
     , fWidth(0)
     , fHeight(0)
     , fConfig(kUnknown_GrPixelConfig)
@@ -450,6 +425,7 @@ struct GrTextureDesc {
     }
 
     GrTextureFlags         fFlags;  //!< bitfield of TextureFlags
+    GrSurfaceOrigin        fOrigin; //!< origin of the texture
     int                    fWidth;  //!< Width of the texture
     int                    fHeight; //!< Height of the texture
 
@@ -529,39 +505,6 @@ enum GrClipType {
     kPath_ClipType
 };
 
-/**
- * Commands used to describe a path. Each command
- * is accompanied by some number of points.
- */
-enum GrPathCmd {
-    kMove_PathCmd,      //!< Starts a new subpath at
-                        //   at the returned point
-                        // 1 point
-    kLine_PathCmd,      //!< Adds a line segment
-                        // 2 points
-    kQuadratic_PathCmd, //!< Adds a quadratic segment
-                        // 3 points
-    kCubic_PathCmd,     //!< Adds a cubic segment
-                        // 4 points
-    kClose_PathCmd,     //!< Closes the current subpath
-                        //   by connecting a line to the
-                        //   starting point.
-                        // 0 points
-    kEnd_PathCmd        //!< Indicates the end of the last subpath
-                        //   when iterating
-                        // 0 points.
-};
-
-/**
- * Gets the number of points associated with a path command.
- */
-static int inline NumPathCmdPoints(GrPathCmd cmd) {
-    static const int gNumPoints[] = {
-        1, 2, 3, 4, 0, 0
-    };
-    return gNumPoints[cmd];
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 
 // opaque type for 3D API object handles
@@ -640,6 +583,7 @@ struct GrBackendRenderTargetDesc {
     int                             fWidth;         //<! width in pixels
     int                             fHeight;        //<! height in pixels
     GrPixelConfig                   fConfig;        //<! color format
+    GrSurfaceOrigin                 fOrigin;        //<! pixel origin
     /**
      * The number of samples per pixel. Gr uses this to influence decisions
      * about applying other forms of anti-aliasing.
@@ -656,23 +600,30 @@ struct GrBackendRenderTargetDesc {
     GrBackendObject                 fRenderTargetHandle;
 };
 
-///////////////////////////////////////////////////////////////////////////////
-// Legacy names that will be kept until WebKit can be updated.
+/**
+ * The GrContext's cache of backend context state can be partially invalidated.
+ * These enums are specific to the GL backend and we'd add a new set for an alternative backend.
+ */
+enum GrGLBackendState {
+    kRenderTarget_GrGLBackendState     = 1 << 0,
+    kTextureBinding_GrGLBackendState   = 1 << 1,
+    // View state stands for scissor and viewport
+    kView_GrGLBackendState             = 1 << 2,
+    kBlend_GrGLBackendState            = 1 << 3,
+    kAA_GrGLBackendState               = 1 << 4,
+    kVertex_GrGLBackendState           = 1 << 5,
+    kStencil_GrGLBackendState          = 1 << 6,
+    kPixelStore_GrGLBackendState       = 1 << 7,
+    kProgram_GrGLBackendState          = 1 << 8,
+    kPathStencil_GrGLBackendState      = 1 << 9,
+    kMisc_GrGLBackendState             = 1 << 10,
+    kALL_GrGLBackendState              = 0xffff
+};
 
-typedef GrBackend GrEngine;
-static const GrBackend kOpenGL_Shaders_GrEngine = kOpenGL_GrBackend;
-
-typedef GrBackendContext GrPlatform3DContext;
-
-typedef GrBackendObject GrPlatform3DObject;
-
-typedef GrBackendTextureFlags GrPlatformTextureFlags;
-static const GrBackendTextureFlags kNone_GrPlatformTextureFlag = kNone_GrBackendTextureFlag;
-static const GrBackendTextureFlags kRenderTarget_GrPlatformTextureFlag = kRenderTarget_GrBackendTextureFlag;
-
-typedef GrBackendTextureDesc GrPlatformTextureDesc;
-
-typedef GrBackendRenderTargetDesc GrPlatformRenderTargetDesc;
+/**
+ * This value translates to reseting all the context state for any backend.
+ */
+static const uint32_t kAll_GrBackendState = 0xffffffff;
 
 ///////////////////////////////////////////////////////////////////////////////
 

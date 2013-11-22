@@ -65,14 +65,14 @@ protected:
         return fName.c_str();
     }
 
-    virtual void onDraw(SkCanvas* canvas) SK_OVERRIDE {
+    virtual void onDraw(SkCanvas*) SK_OVERRIDE {
         if (fRaw) {
             for (int i = 0; i < N; ++i) {
                 SkPath::RawIter iter(fPath);
                 SkPath::Verb verb;
                 SkPoint      pts[4];
 
-                while ((verb = iter.next(pts)) != SkPath::kDone_Verb);
+                while ((verb = iter.next(pts)) != SkPath::kDone_Verb) { }
             }
         } else {
             for (int i = 0; i < N; ++i) {
@@ -80,7 +80,7 @@ protected:
                 SkPath::Verb verb;
                 SkPoint      pts[4];
 
-                while ((verb = iter.next(pts)) != SkPath::kDone_Verb);
+                while ((verb = iter.next(pts)) != SkPath::kDone_Verb) { }
             }
         }
     }

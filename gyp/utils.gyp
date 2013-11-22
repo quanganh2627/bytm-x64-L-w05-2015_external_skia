@@ -1,3 +1,4 @@
+# Gyp for utils.
 {
   'targets': [
     {
@@ -6,12 +7,13 @@
       'type': 'static_library',
       'standalone_static_library': 1,
       'dependencies': [
-        'cityhash',
+        'core.gyp:*',
       ],
       'include_dirs': [
-        '../include/config',
-        '../include/core',
         '../include/effects',
+        '../include/images',
+        '../include/lazy',
+        '../include/pathops',
         '../include/pipe',
         '../include/utils',
         '../include/utils/mac',
@@ -32,9 +34,12 @@
         '../src/utils/SkThreadPool.cpp',
 
         '../include/utils/SkBoundaryPatch.h',
+        '../include/utils/SkFrontBufferedStream.h',
         '../include/utils/SkCamera.h',
+        '../include/utils/SkCanvasStateUtils.h',
         '../include/utils/SkCubicInterval.h',
         '../include/utils/SkCullPoints.h',
+        '../include/utils/SkDebugUtils.h',
         '../include/utils/SkDeferredCanvas.h',
         '../include/utils/SkDumpCanvas.h',
         '../include/utils/SkInterpolator.h',
@@ -56,16 +61,16 @@
 
         '../src/utils/SkBase64.cpp',
         '../src/utils/SkBase64.h',
-        '../src/utils/SkBitmapChecksummer.cpp',
-        '../src/utils/SkBitmapChecksummer.h',
-        '../src/utils/SkBitmapTransformer.cpp',
-        '../src/utils/SkBitmapTransformer.h',
+        '../src/utils/SkBitmapHasher.cpp',
+        '../src/utils/SkBitmapHasher.h',
         '../src/utils/SkBitSet.cpp',
         '../src/utils/SkBitSet.h',
         '../src/utils/SkBoundaryPatch.cpp',
+        '../src/utils/SkFrontBufferedStream.cpp',
         '../src/utils/SkCamera.cpp',
-        '../src/utils/SkCityHash.cpp',
-        '../src/utils/SkCityHash.h',
+        '../src/utils/SkCanvasStack.h',
+        '../src/utils/SkCanvasStack.cpp',
+        '../src/utils/SkCanvasStateUtils.cpp',
         '../src/utils/SkCubicInterval.cpp',
         '../src/utils/SkCullPoints.cpp',
         '../src/utils/SkDeferredCanvas.cpp',
@@ -85,6 +90,7 @@
         '../src/utils/SkParseColor.cpp',
         '../src/utils/SkParsePath.cpp',
         '../src/utils/SkPictureUtils.cpp',
+        '../src/utils/SkPathUtils.cpp',
         '../src/utils/SkProxyCanvas.cpp',
         '../src/utils/SkSHA1.cpp',
         '../src/utils/SkSHA1.h',
@@ -97,6 +103,8 @@
         '../src/utils/SkThreadUtils_pthread_other.cpp',
         '../src/utils/SkThreadUtils_win.cpp',
         '../src/utils/SkThreadUtils_win.h',
+        '../src/utils/SkTFitsIn.h',
+        '../src/utils/SkTLogic.h',
         '../src/utils/SkUnitMappers.cpp',
 
         #mac
@@ -116,6 +124,10 @@
         '../src/utils/win/SkHRESULT.cpp',
         '../src/utils/win/SkIStream.cpp',
         '../src/utils/win/SkWGL_win.cpp',
+
+        #testing
+        '../src/fonts/SkGScalerContext.cpp',
+        '../src/fonts/SkGScalerContext.h',
       ],
       'sources!': [
           '../src/utils/SDL/SkOSWindow_SDL.cpp',
@@ -147,11 +159,11 @@
             '../src/utils/SkThreadUtils_pthread_mach.cpp',
           ],
         }],
-        [ 'skia_os in ["linux", "freebsd", "openbsd", "solaris"]', {
+        [ 'skia_os in ["linux", "freebsd", "openbsd", "solaris", "chromeos"]', {
           'sources!': [
             '../src/utils/SkThreadUtils_pthread_other.cpp',
           ],
-        },{ #else if 'skia_os not in ["linux", "freebsd", "openbsd", "solaris"]'
+        },{ #else if 'skia_os not in ["linux", "freebsd", "openbsd", "solaris", "chromeos"]'
           'include_dirs!': [
             '../include/utils/unix',
           ],
@@ -199,7 +211,7 @@
         }],
         [ 'skia_os == "android"', {
           'sources': [
-            '../src/utils/android/ashmem.c',
+            '../src/utils/android/ashmem.cpp',
           ],
         }],
       ],
@@ -208,41 +220,6 @@
           '../include/utils',
         ],
       },
-    },
-    {
-      'target_name': 'cityhash',
-      'type': 'static_library',
-      'standalone_static_library': 1,
-      'include_dirs': [
-        '../include/config',
-        '../include/core',
-        '../src/utils/cityhash',
-        '../third_party/externals/cityhash/src',
-      ],
-      'sources': [
-        '../third_party/externals/cityhash/src/city.cc',
-      ],
-      'direct_dependent_settings': {
-        'include_dirs': [
-          '../third_party/externals/cityhash/src',
-        ],
-      },
-      'conditions': [
-        [ 'skia_os == "mac"', {
-          'xcode_settings': {
-            'OTHER_CPLUSPLUSFLAGS!': [
-              '-Werror',
-            ]
-          },
-        }],
-        [ 'skia_os == "win"', {
-          'msvs_settings': {
-            'VCCLCompilerTool': {
-              'WarnAsError': 'false',
-            },
-          },
-        }],
-      ],
     },
   ],
 }

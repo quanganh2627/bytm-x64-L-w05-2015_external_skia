@@ -45,6 +45,7 @@
         '../experimental/Intersection/QuarticRoot.cpp',
         '../experimental/Intersection/ShapeOps.cpp',
         '../experimental/Intersection/Simplify.cpp',
+        '../experimental/Intersection/TriangleUtilities.cpp',
         '../experimental/Intersection/CubicParameterization.cpp',
         '../experimental/Intersection/CubicReduceOrder.cpp',
         '../experimental/Intersection/CubicSubDivide.cpp',
@@ -65,16 +66,15 @@
         '../experimental/Intersection/ShapeOps.h',
         '../experimental/Intersection/Simplify.h',
         '../experimental/Intersection/TSearch.h',
-      ],
+        '../experimental/Intersection/TriangleUtilities.h',
+     ],
       'dependencies': [
-        'skia_base_libs.gyp:skia_base_libs',
-        'effects.gyp:effects',
-        'images.gyp:images',
+        'skia_lib.gyp:skia_lib',
         'views.gyp:views',
         'xml.gyp:xml',
       ],
       'conditions' : [
-        [ 'skia_os in ["linux", "freebsd", "openbsd", "solaris"]', {
+        [ 'skia_os in ["linux", "freebsd", "openbsd", "solaris", "chromeos"]', {
         }],
         [ 'skia_os == "win"', {
         }],

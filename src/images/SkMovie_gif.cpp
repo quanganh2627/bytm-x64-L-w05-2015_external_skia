@@ -69,8 +69,7 @@ static SkMSec savedimage_duration(const SavedImage* image)
     {
         if (image->ExtensionBlocks[j].Function == GRAPHICS_EXT_FUNC_CODE)
         {
-            int size = image->ExtensionBlocks[j].ByteCount;
-            SkASSERT(size >= 4);
+            SkASSERT(image->ExtensionBlocks[j].ByteCount >= 4);
             const uint8_t* b = (const uint8_t*)image->ExtensionBlocks[j].Bytes;
             return ((b[2] << 8) | b[1]) * 10;
         }
@@ -124,6 +123,7 @@ static void copyLine(uint32_t* dst, const unsigned char* src, const ColorMapObje
     }
 }
 
+#if GIFLIB_MAJOR < 5
 static void copyInterlaceGroup(SkBitmap* bm, const unsigned char*& src,
                                const ColorMapObject* cmap, int transparent, int copyWidth,
                                int copyHeight, const GifImageDesc& imageDesc, int rowStep,
@@ -170,6 +170,7 @@ static void blitInterlace(SkBitmap* bm, const SavedImage* frame, const ColorMapO
 
     copyInterlaceGroup(bm, src, cmap, transparent, copyWidth, copyHeight, frame->ImageDesc, 2, 1);
 }
+#endif
 
 static void blitNormal(SkBitmap* bm, const SavedImage* frame, const ColorMapObject* cmap,
                        int transparent)
@@ -188,9 +189,6 @@ static void blitNormal(SkBitmap* bm, const SavedImage* frame, const ColorMapObje
         copyHeight = height - frame->ImageDesc.Top;
     }
 
-    int srcPad, dstPad;
-    dstPad = width - copyWidth;
-    srcPad = frame->ImageDesc.Width - copyWidth;
     for (; copyHeight > 0; copyHeight--) {
         copyLine(dst, src, cmap, transparent, copyWidth);
         src += frame->ImageDesc.Width;
@@ -245,11 +243,15 @@ static void drawFrame(SkBitmap* bm, const SavedImage* frame, const ColorMapObjec
         return;
     }
 
+#if GIFLIB_MAJOR < 5
+    // before GIFLIB 5, de-interlacing wasn't done by library at load time
     if (frame->ImageDesc.Interlace) {
         blitInterlace(bm, frame, cmap, transparent);
-    } else {
-        blitNormal(bm, frame, cmap, transparent);
+        return;
     }
+#endif
+
+    blitNormal(bm, frame, cmap, transparent);
 }
 
 static bool checkIfWillBeCleared(const SavedImage* frame)

@@ -1,4 +1,3 @@
-
 /*
  * Copyright 2011 Google Inc.
  *
@@ -6,14 +5,14 @@
  * found in the LICENSE file.
  */
 
-
 #include "GrPathUtils.h"
+
 #include "GrPoint.h"
 #include "SkGeometry.h"
 
 SkScalar GrPathUtils::scaleToleranceToSrc(SkScalar devTol,
                                           const SkMatrix& viewM,
-                                          const GrRect& pathBounds) {
+                                          const SkRect& pathBounds) {
     // In order to tesselate the path we get a bound on how much the matrix can
     // stretch when mapping to screen coordinates.
     SkScalar stretch = viewM.getMaxStretch();
@@ -158,22 +157,22 @@ int GrPathUtils::worstCasePointCount(const SkPath& path, int* subpaths,
     bool first = true;
 
     SkPath::Iter iter(path, false);
-    GrPathCmd cmd;
+    SkPath::Verb verb;
 
     GrPoint pts[4];
-    while ((cmd = (GrPathCmd)iter.next(pts)) != kEnd_PathCmd) {
+    while ((verb = iter.next(pts)) != SkPath::kDone_Verb) {
 
-        switch (cmd) {
-            case kLine_PathCmd:
+        switch (verb) {
+            case SkPath::kLine_Verb:
                 pointCount += 1;
                 break;
-            case kQuadratic_PathCmd:
+            case SkPath::kQuad_Verb:
                 pointCount += quadraticPointCount(pts, tol);
                 break;
-            case kCubic_PathCmd:
+            case SkPath::kCubic_Verb:
                 pointCount += cubicPointCount(pts, tol);
                 break;
-            case kMove_PathCmd:
+            case SkPath::kMove_Verb:
                 pointCount += 1;
                 if (!first) {
                     ++(*subpaths);

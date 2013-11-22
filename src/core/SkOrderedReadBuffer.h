@@ -10,12 +10,17 @@
 #define SkOrderedReadBuffer_DEFINED
 
 #include "SkRefCnt.h"
-#include "SkBitmap.h"
 #include "SkBitmapHeap.h"
 #include "SkFlattenableBuffers.h"
 #include "SkPath.h"
+#include "SkPicture.h"
 #include "SkReader32.h"
-#include "SkSerializationHelpers.h"
+
+class SkBitmap;
+
+#if defined(SK_DEBUG) && defined(SK_BUILD_FOR_MAC)
+    #define DEBUG_NON_DETERMINISTIC_ASSERT
+#endif
 
 class SkOrderedReadBuffer : public SkFlattenableReadBuffer {
 public:
@@ -43,7 +48,7 @@ public:
     virtual int32_t read32() SK_OVERRIDE;
 
     // strings -- the caller is responsible for freeing the string contents
-    virtual char* readString() SK_OVERRIDE;
+    virtual void readString(SkString* string) SK_OVERRIDE;
     virtual void* readEncodedString(size_t* length, SkPaint::TextEncoding encoding) SK_OVERRIDE;
 
     // common data structures
@@ -99,11 +104,11 @@ public:
     }
 
     /**
-     *  Provide a function to decode an SkBitmap from an SkStream. Only used if the writer encoded
-     *  the SkBitmap. If the proper decoder cannot be used, a red bitmap with the appropriate size
-     *  will be used.
+     *  Provide a function to decode an SkBitmap from encoded data. Only used if the writer
+     *  encoded the SkBitmap. If the proper decoder cannot be used, a red bitmap with the
+     *  appropriate size will be used.
      */
-    void setBitmapDecoder(SkSerializationHelpers::DecodeBitmap bitmapDecoder) {
+    void setBitmapDecoder(SkPicture::InstallPixelRefProc bitmapDecoder) {
         fBitmapDecoder = bitmapDecoder;
     }
 
@@ -119,7 +124,13 @@ private:
     SkFlattenable::Factory* fFactoryArray;
     int                     fFactoryCount;
 
-    SkSerializationHelpers::DecodeBitmap fBitmapDecoder;
+    SkPicture::InstallPixelRefProc fBitmapDecoder;
+
+#ifdef DEBUG_NON_DETERMINISTIC_ASSERT
+    // Debugging counter to keep track of how many bitmaps we
+    // have decoded.
+    int fDecodedBitmapIndex;
+#endif // DEBUG_NON_DETERMINISTIC_ASSERT
 
     typedef SkFlattenableReadBuffer INHERITED;
 };

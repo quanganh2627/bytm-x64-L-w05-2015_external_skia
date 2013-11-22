@@ -10,6 +10,7 @@
 #include "SkPDFCatalog.h"
 #include "SkPDFDevice.h"
 #include "SkPDFPage.h"
+#include "SkPDFResourceDict.h"
 #include "SkStream.h"
 
 SkPDFPage::SkPDFPage(SkPDFDevice* content)
@@ -21,9 +22,11 @@ SkPDFPage::SkPDFPage(SkPDFDevice* content)
 SkPDFPage::~SkPDFPage() {}
 
 void SkPDFPage::finalizePage(SkPDFCatalog* catalog, bool firstPage,
-                             SkTDArray<SkPDFObject*>* resourceObjects) {
+                             const SkTSet<SkPDFObject*>& knownResourceObjects,
+                             SkTSet<SkPDFObject*>* newResourceObjects) {
+    SkPDFResourceDict* resourceDict = fDevice->getResourceDict();
     if (fContentStream.get() == NULL) {
-        insert("Resources", fDevice->getResourceDict());
+        insert("Resources", resourceDict);
         SkSafeUnref(this->insert("MediaBox", fDevice->copyMediaBox()));
         if (!SkToBool(catalog->getDocumentFlags() &
                       SkPDFDocument::kNoLinks_Flags)) {
@@ -38,7 +41,9 @@ void SkPDFPage::finalizePage(SkPDFCatalog* catalog, bool firstPage,
         insert("Contents", new SkPDFObjRef(fContentStream.get()))->unref();
     }
     catalog->addObject(fContentStream.get(), firstPage);
-    fDevice->getResources(resourceObjects, true);
+    resourceDict->getReferencedResources(knownResourceObjects,
+                                         newResourceObjects,
+                                         true);
 }
 
 off_t SkPDFPage::getPageSize(SkPDFCatalog* catalog, off_t fileOffset) {
@@ -146,4 +151,8 @@ const SkTDArray<SkPDFFont*>& SkPDFPage::getFontResources() const {
 
 const SkPDFGlyphSetMap& SkPDFPage::getFontGlyphUsage() const {
     return fDevice->getFontGlyphUsage();
+}
+
+void SkPDFPage::appendDestinations(SkPDFDict* dict) {
+    fDevice->appendDestinations(dict, this);
 }

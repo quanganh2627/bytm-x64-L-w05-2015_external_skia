@@ -16,7 +16,7 @@
 
 //////////////////////////////////////////////////////////////////////
 
-#if !defined(SK_BUILD_FOR_ANDROID) && !defined(SK_BUILD_FOR_ANDROID_NDK) && !defined(SK_BUILD_FOR_IOS) && !defined(SK_BUILD_FOR_PALM) && !defined(SK_BUILD_FOR_WINCE) && !defined(SK_BUILD_FOR_WIN32) && !defined(SK_BUILD_FOR_UNIX) && !defined(SK_BUILD_FOR_MAC) && !defined(SK_BUILD_FOR_SDL) && !defined(SK_BUILD_FOR_BREW) && !defined(SK_BUILD_FOR_NACL)
+#if !defined(SK_BUILD_FOR_ANDROID) && !defined(SK_BUILD_FOR_IOS) && !defined(SK_BUILD_FOR_PALM) && !defined(SK_BUILD_FOR_WINCE) && !defined(SK_BUILD_FOR_WIN32) && !defined(SK_BUILD_FOR_UNIX) && !defined(SK_BUILD_FOR_MAC) && !defined(SK_BUILD_FOR_SDL) && !defined(SK_BUILD_FOR_BREW) && !defined(SK_BUILD_FOR_NACL)
 
     #ifdef __APPLE__
         #include "TargetConditionals.h"
@@ -30,8 +30,6 @@
         #define SK_BUILD_FOR_WIN32
     #elif defined(__SYMBIAN32__)
         #define SK_BUILD_FOR_WIN32
-    #elif defined(ANDROID_NDK)
-        #define SK_BUILD_FOR_ANDROID_NDK
     #elif defined(ANDROID)
         #define SK_BUILD_FOR_ANDROID
     #elif defined(linux) || defined(__FreeBSD__) || defined(__OpenBSD__) || \
@@ -46,14 +44,15 @@
 
 #endif
 
-/* Even if the user only defined the NDK variant we still need to build
- * the default Android code. Therefore, when attempting to include/exclude
- * something from the NDK variant check first that we are building for
- * Android then check the status of the NDK define.
+/* Even if the user only defined the framework variant we still need to build
+ * the default (NDK-compliant) Android code. Therefore, when attempting to
+ * include/exclude something from the framework variant check first that we are
+ * building for Android then check the status of the framework define.
  */
-#if defined(SK_BUILD_FOR_ANDROID_NDK) && !defined(SK_BUILD_FOR_ANDROID)
+#if defined(SK_BUILD_FOR_ANDROID_FRAMEWORK) && !defined(SK_BUILD_FOR_ANDROID)
     #define SK_BUILD_FOR_ANDROID
 #endif
+
 
 // USE_CHROMIUM_SKIA is defined when building Skia for the Chromium
 // browser.
@@ -100,10 +99,22 @@
 //////////////////////////////////////////////////////////////////////
 
 #if !defined(SK_CPU_BENDIAN) && !defined(SK_CPU_LENDIAN)
-    #if defined (__ppc__) || defined(__ppc64__)
+    #if defined (__ppc__) || defined(__PPC__) || defined(__ppc64__) \
+        || defined(__PPC64__)
         #define SK_CPU_BENDIAN
     #else
         #define SK_CPU_LENDIAN
+    #endif
+#endif
+
+//////////////////////////////////////////////////////////////////////
+
+#ifndef SK_MMAP_SUPPORT
+    #ifdef SK_BUILD_FOR_WIN32
+        // by default, if we're windows, we assume we don't have mmap
+        #define SK_MMAP_SUPPORT 0
+    #else
+        #define SK_MMAP_SUPPORT 1
     #endif
 #endif
 
@@ -181,16 +192,6 @@
             #define SK_ARM_HAS_EDSP
         #endif
     #endif
-#endif
-
-//////////////////////////////////////////////////////////////////////
-
-/**
- *  THUMB is the only known config where we avoid small branches in
- *  favor of more complex math.
- */
-#if !(defined(__arm__) && defined(__thumb__))
-    #define SK_CPU_HAS_CONDITIONAL_INSTR
 #endif
 
 //////////////////////////////////////////////////////////////////////

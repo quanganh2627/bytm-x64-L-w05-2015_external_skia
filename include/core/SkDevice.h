@@ -23,8 +23,7 @@ class SkMatrix;
 class SkMetaData;
 class SkRegion;
 
-// This is an opaque class, not interpreted by skia
-class SkGpuRenderTarget;
+class GrRenderTarget;
 
 class SK_API SkDevice : public SkRefCnt {
 public:
@@ -160,7 +159,7 @@ public:
     /**
      * Return the device's associated gpu render target, or NULL.
      */
-    virtual SkGpuRenderTarget* accessRenderTarget() { return NULL; }
+    virtual GrRenderTarget* accessRenderTarget() { return NULL; }
 
 
     /**
@@ -175,7 +174,7 @@ public:
      * and SkCanvas' SkDevice & SkBitmap -taking ctors). It allows the
      * devices to prepare for drawing (e.g., locking their pixels, etc.)
      */
-    virtual void onAttachToCanvas(SkCanvas* canvas) {
+    virtual void onAttachToCanvas(SkCanvas*) {
         SkASSERT(!fAttachedToCanvas);
         this->lockPixels();
 #ifdef SK_DEBUG
@@ -259,6 +258,9 @@ protected:
                           const SkPaint& paint);
     virtual void drawOval(const SkDraw&, const SkRect& oval,
                           const SkPaint& paint);
+    virtual void drawRRect(const SkDraw&, const SkRRect& rr,
+                           const SkPaint& paint);
+
     /**
      *  If pathIsMutable, then the implementation is allowed to cast path to a
      *  non-const pointer and modify it in place (as an optimization). Canvas
@@ -275,7 +277,6 @@ protected:
                           const SkMatrix* prePathMatrix = NULL,
                           bool pathIsMutable = false);
     virtual void drawBitmap(const SkDraw&, const SkBitmap& bitmap,
-                            const SkIRect* srcRectOrNull,
                             const SkMatrix& matrix, const SkPaint& paint);
     virtual void drawSprite(const SkDraw&, const SkBitmap& bitmap,
                             int x, int y, const SkPaint& paint);

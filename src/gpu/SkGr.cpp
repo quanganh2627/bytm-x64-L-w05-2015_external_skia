@@ -1,12 +1,9 @@
-
 /*
  * Copyright 2010 Google Inc.
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
-
-
 
 #include "SkGr.h"
 
@@ -24,7 +21,7 @@
 static void build_compressed_data(void* buffer, const SkBitmap& bitmap) {
     SkASSERT(SkBitmap::kIndex8_Config == bitmap.config());
 
-    SkAutoLockPixels apl(bitmap);
+    SkAutoLockPixels alp(bitmap);
     if (!bitmap.readyToDraw()) {
         SkDEBUGFAIL("bitmap not ready to draw!");
         return;
@@ -39,7 +36,7 @@ static void build_compressed_data(void* buffer, const SkBitmap& bitmap) {
     // always skip a full 256 number of entries, even if we memcpy'd fewer
     dst += kGrColorTableSize;
 
-    if (bitmap.width() == bitmap.rowBytes()) {
+    if ((unsigned)bitmap.width() == bitmap.rowBytes()) {
         memcpy(dst, bitmap.getPixels(), bitmap.getSize());
     } else {
         // need to trim off the extra bytes per row
@@ -88,12 +85,6 @@ static GrTexture* sk_gr_create_bitmap_texture(GrContext* ctx,
                                               bool cache,
                                               const GrTextureParams* params,
                                               const SkBitmap& origBitmap) {
-    SkAutoLockPixels alp(origBitmap);
-
-    if (!origBitmap.readyToDraw()) {
-        return NULL;
-    }
-
     SkBitmap tmpBitmap;
 
     const SkBitmap* bitmap = &origBitmap;
@@ -104,10 +95,8 @@ static GrTexture* sk_gr_create_bitmap_texture(GrContext* ctx,
     if (SkBitmap::kIndex8_Config == bitmap->config()) {
         // build_compressed_data doesn't do npot->pot expansion
         // and paletted textures can't be sub-updated
-        if (ctx->supportsIndex8PixelConfig(params,
-                                           bitmap->width(), bitmap->height())) {
-            size_t imagesize = bitmap->width() * bitmap->height() +
-                                kGrColorTableSize;
+        if (ctx->supportsIndex8PixelConfig(params, bitmap->width(), bitmap->height())) {
+            size_t imagesize = bitmap->width() * bitmap->height() + kGrColorTableSize;
             SkAutoMalloc storage(imagesize);
 
             build_compressed_data(storage.get(), origBitmap);
@@ -135,6 +124,10 @@ static GrTexture* sk_gr_create_bitmap_texture(GrContext* ctx,
         }
     }
 
+    SkAutoLockPixels alp(*bitmap);
+    if (!bitmap->readyToDraw()) {
+        return NULL;
+    }
     if (cache) {
         // This texture is likely to be used again so leave it in the cache
         GrCacheID cacheID;
@@ -215,9 +208,9 @@ GrPixelConfig SkBitmapConfig2GrPixelConfig(SkBitmap::Config config) {
         case SkBitmap::kARGB_4444_Config:
             return kRGBA_4444_GrPixelConfig;
         case SkBitmap::kARGB_8888_Config:
-            return kSkia8888_PM_GrPixelConfig;
+            return kSkia8888_GrPixelConfig;
         default:
-            // kNo_Config, kA1_Config missing, and kRLE_Index8_Config
+            // kNo_Config, kA1_Config missing
             return kUnknown_GrPixelConfig;
     }
 }

@@ -9,6 +9,7 @@
 #include "SkColorPriv.h"
 #include "SkFlattenableBuffers.h"
 #include "SkPixelRef.h"
+#include "SkErrorInternals.h"
 
 bool SkBitmapProcShader::CanDo(const SkBitmap& bm, TileMode tx, TileMode ty) {
     switch (bm.config()) {
@@ -142,6 +143,7 @@ bool SkBitmapProcShader::setContext(const SkBitmap& device,
 
 void SkBitmapProcShader::endContext() {
     fState.fOrigBitmap.unlockPixels();
+    fState.endContext();
     this->INHERITED::endContext();
 }
 
@@ -163,7 +165,9 @@ void SkBitmapProcShader::shadeSpan(int x, int y, SkPMColor dstC[], int count) {
         return;
     }
 
-    uint32_t buffer[BUF_MAX + TEST_BUFFER_EXTRA];
+    uint32_t buffer1[BUF_MAX + TEST_BUFFER_EXTRA+ 16];
+    uint32_t* buffer = (uint32_t*)(((size_t)buffer1+ 0xF) &(~0xF));
+
     SkBitmapProcState::MatrixProc   mproc = state.getMatrixProc();
     SkBitmapProcState::SampleProc32 sproc = state.getSampleProc32();
     int max = fState.maxCountForBufferSize(sizeof(buffer[0]) * BUF_MAX);
@@ -352,7 +356,35 @@ GrEffectRef* SkBitmapProcShader::asNewEffect(GrContext* context, const SkPaint& 
     };
 
     // Must set wrap and filter on the sampler before requesting a texture.
-    GrTextureParams params(tm, paint.isFilterBitmap());
+    SkPaint::FilterLevel paintFilterLevel = paint.getFilterLevel();
+    GrTextureParams::FilterMode textureFilterMode;
+    switch(paintFilterLevel) {
+        case SkPaint::kNone_FilterLevel:
+            textureFilterMode = GrTextureParams::kNone_FilterMode;
+            break;
+        case SkPaint::kLow_FilterLevel:
+            textureFilterMode = GrTextureParams::kBilerp_FilterMode;
+            break;
+        case SkPaint::kMedium_FilterLevel:
+            textureFilterMode = GrTextureParams::kMipMap_FilterMode;
+            break;
+        case SkPaint::kHigh_FilterLevel:
+            SkErrorInternals::SetError( kInvalidPaint_SkError,
+                                        "Sorry, I don't yet support high quality "
+                                        "filtering on the GPU; falling back to "
+                                        "MIPMaps.");
+            textureFilterMode = GrTextureParams::kMipMap_FilterMode;
+            break;
+        default:
+            SkErrorInternals::SetError( kInvalidPaint_SkError,
+                                        "Sorry, I don't understand the filtering "
+                                        "mode you asked for.  Falling back to "
+                                        "MIPMaps.");
+            textureFilterMode = GrTextureParams::kMipMap_FilterMode;
+            break;
+
+    }
+    GrTextureParams params(tm, textureFilterMode);
     GrTexture* texture = GrLockAndRefCachedBitmapTexture(context, fRawBitmap, &params);
 
     if (NULL == texture) {

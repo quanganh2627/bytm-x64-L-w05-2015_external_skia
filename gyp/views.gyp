@@ -11,18 +11,14 @@
       'product_name': 'skia_views',
       'type': 'static_library',
       'standalone_static_library': 1,
-      'include_dirs': [
-        '../include/config',
-        '../include/core',
-        '../include/views',
-        '../include/xml',
-        '../include/utils',
-        '../include/images',
-        '../include/effects',
-        '../include/views/unix',
-      ],
       'dependencies': [
+        'skia_lib.gyp:skia_lib',
         'angle.gyp:*',
+        'xml.gyp:*',
+      ],
+      'include_dirs': [
+        '../include/views',
+        '../include/views/unix',
       ],
       'sources': [
         '../include/views/SkApplication.h',
@@ -97,7 +93,7 @@
             '../src/views/mac/skia_mac.mm',
           ],
         }],
-        [ 'skia_os in ["linux", "freebsd", "openbsd", "solaris"]', {
+        [ 'skia_os in ["linux", "freebsd", "openbsd", "solaris", "chromeos"]', {
           'link_settings': {
             'libraries': [
               '-lGL',

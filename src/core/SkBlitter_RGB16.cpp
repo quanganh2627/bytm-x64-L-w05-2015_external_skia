@@ -24,6 +24,10 @@
     #define USE_BLACK_BLITTER
 #endif
 
+#ifdef USE_SSE2
+#include <emmintrin.h>
+#endif
+
 void sk_dither_memset16(uint16_t dst[], uint16_t value, uint16_t other,
                         int count) {
     if (count > 0) {
@@ -211,7 +215,7 @@ void SkRGB16_Black_Blitter::blitMask(const SkMask& mask,
         const uint8_t* SK_RESTRICT alpha = mask.getAddr8(clip.fLeft, clip.fTop);
         unsigned width = clip.width();
         unsigned height = clip.height();
-        unsigned deviceRB = fDevice.rowBytes() - (width << 1);
+        size_t deviceRB = fDevice.rowBytes() - (width << 1);
         unsigned maskRB = mask.fRowBytes - width;
 
         SkASSERT((int)height > 0);
@@ -347,6 +351,154 @@ void SkRGB16_Opaque_Blitter::blitAntiH(int x, int y,
     }
 }
 
+#ifdef USE_SSE2
+static unsigned int solid_pixels_masks[1024] = {
+  0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFFF0000,
+  0x00000000, 0x00000000, 0x00000000, 0x0000FFFF, 0x00000000, 0x00000000, 0x00000000, 0xFFFFFFFF,
+  0x00000000, 0x00000000, 0xFFFF0000, 0x00000000, 0x00000000, 0x00000000, 0xFFFF0000, 0xFFFF0000,
+  0x00000000, 0x00000000, 0xFFFF0000, 0x0000FFFF, 0x00000000, 0x00000000, 0xFFFF0000, 0xFFFFFFFF,
+  0x00000000, 0x00000000, 0x0000FFFF, 0x00000000, 0x00000000, 0x00000000, 0x0000FFFF, 0xFFFF0000,
+  0x00000000, 0x00000000, 0x0000FFFF, 0x0000FFFF, 0x00000000, 0x00000000, 0x0000FFFF, 0xFFFFFFFF,
+  0x00000000, 0x00000000, 0xFFFFFFFF, 0x00000000, 0x00000000, 0x00000000, 0xFFFFFFFF, 0xFFFF0000,
+  0x00000000, 0x00000000, 0xFFFFFFFF, 0x0000FFFF, 0x00000000, 0x00000000, 0xFFFFFFFF, 0xFFFFFFFF,
+  0x00000000, 0xFFFF0000, 0x00000000, 0x00000000, 0x00000000, 0xFFFF0000, 0x00000000, 0xFFFF0000,
+  0x00000000, 0xFFFF0000, 0x00000000, 0x0000FFFF, 0x00000000, 0xFFFF0000, 0x00000000, 0xFFFFFFFF,
+  0x00000000, 0xFFFF0000, 0xFFFF0000, 0x00000000, 0x00000000, 0xFFFF0000, 0xFFFF0000, 0xFFFF0000,
+  0x00000000, 0xFFFF0000, 0xFFFF0000, 0x0000FFFF, 0x00000000, 0xFFFF0000, 0xFFFF0000, 0xFFFFFFFF,
+  0x00000000, 0xFFFF0000, 0x0000FFFF, 0x00000000, 0x00000000, 0xFFFF0000, 0x0000FFFF, 0xFFFF0000,
+  0x00000000, 0xFFFF0000, 0x0000FFFF, 0x0000FFFF, 0x00000000, 0xFFFF0000, 0x0000FFFF, 0xFFFFFFFF,
+  0x00000000, 0xFFFF0000, 0xFFFFFFFF, 0x00000000, 0x00000000, 0xFFFF0000, 0xFFFFFFFF, 0xFFFF0000,
+  0x00000000, 0xFFFF0000, 0xFFFFFFFF, 0x0000FFFF, 0x00000000, 0xFFFF0000, 0xFFFFFFFF, 0xFFFFFFFF,
+  0x00000000, 0x0000FFFF, 0x00000000, 0x00000000, 0x00000000, 0x0000FFFF, 0x00000000, 0xFFFF0000,
+  0x00000000, 0x0000FFFF, 0x00000000, 0x0000FFFF, 0x00000000, 0x0000FFFF, 0x00000000, 0xFFFFFFFF,
+  0x00000000, 0x0000FFFF, 0xFFFF0000, 0x00000000, 0x00000000, 0x0000FFFF, 0xFFFF0000, 0xFFFF0000,
+  0x00000000, 0x0000FFFF, 0xFFFF0000, 0x0000FFFF, 0x00000000, 0x0000FFFF, 0xFFFF0000, 0xFFFFFFFF,
+  0x00000000, 0x0000FFFF, 0x0000FFFF, 0x00000000, 0x00000000, 0x0000FFFF, 0x0000FFFF, 0xFFFF0000,
+  0x00000000, 0x0000FFFF, 0x0000FFFF, 0x0000FFFF, 0x00000000, 0x0000FFFF, 0x0000FFFF, 0xFFFFFFFF,
+  0x00000000, 0x0000FFFF, 0xFFFFFFFF, 0x00000000, 0x00000000, 0x0000FFFF, 0xFFFFFFFF, 0xFFFF0000,
+  0x00000000, 0x0000FFFF, 0xFFFFFFFF, 0x0000FFFF, 0x00000000, 0x0000FFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+  0x00000000, 0xFFFFFFFF, 0x00000000, 0x00000000, 0x00000000, 0xFFFFFFFF, 0x00000000, 0xFFFF0000,
+  0x00000000, 0xFFFFFFFF, 0x00000000, 0x0000FFFF, 0x00000000, 0xFFFFFFFF, 0x00000000, 0xFFFFFFFF,
+  0x00000000, 0xFFFFFFFF, 0xFFFF0000, 0x00000000, 0x00000000, 0xFFFFFFFF, 0xFFFF0000, 0xFFFF0000,
+  0x00000000, 0xFFFFFFFF, 0xFFFF0000, 0x0000FFFF, 0x00000000, 0xFFFFFFFF, 0xFFFF0000, 0xFFFFFFFF,
+  0x00000000, 0xFFFFFFFF, 0x0000FFFF, 0x00000000, 0x00000000, 0xFFFFFFFF, 0x0000FFFF, 0xFFFF0000,
+  0x00000000, 0xFFFFFFFF, 0x0000FFFF, 0x0000FFFF, 0x00000000, 0xFFFFFFFF, 0x0000FFFF, 0xFFFFFFFF,
+  0x00000000, 0xFFFFFFFF, 0xFFFFFFFF, 0x00000000, 0x00000000, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFF0000,
+  0x00000000, 0xFFFFFFFF, 0xFFFFFFFF, 0x0000FFFF, 0x00000000, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+  0xFFFF0000, 0x00000000, 0x00000000, 0x00000000, 0xFFFF0000, 0x00000000, 0x00000000, 0xFFFF0000,
+  0xFFFF0000, 0x00000000, 0x00000000, 0x0000FFFF, 0xFFFF0000, 0x00000000, 0x00000000, 0xFFFFFFFF,
+  0xFFFF0000, 0x00000000, 0xFFFF0000, 0x00000000, 0xFFFF0000, 0x00000000, 0xFFFF0000, 0xFFFF0000,
+  0xFFFF0000, 0x00000000, 0xFFFF0000, 0x0000FFFF, 0xFFFF0000, 0x00000000, 0xFFFF0000, 0xFFFFFFFF,
+  0xFFFF0000, 0x00000000, 0x0000FFFF, 0x00000000, 0xFFFF0000, 0x00000000, 0x0000FFFF, 0xFFFF0000,
+  0xFFFF0000, 0x00000000, 0x0000FFFF, 0x0000FFFF, 0xFFFF0000, 0x00000000, 0x0000FFFF, 0xFFFFFFFF,
+  0xFFFF0000, 0x00000000, 0xFFFFFFFF, 0x00000000, 0xFFFF0000, 0x00000000, 0xFFFFFFFF, 0xFFFF0000,
+  0xFFFF0000, 0x00000000, 0xFFFFFFFF, 0x0000FFFF, 0xFFFF0000, 0x00000000, 0xFFFFFFFF, 0xFFFFFFFF,
+  0xFFFF0000, 0xFFFF0000, 0x00000000, 0x00000000, 0xFFFF0000, 0xFFFF0000, 0x00000000, 0xFFFF0000,
+  0xFFFF0000, 0xFFFF0000, 0x00000000, 0x0000FFFF, 0xFFFF0000, 0xFFFF0000, 0x00000000, 0xFFFFFFFF,
+  0xFFFF0000, 0xFFFF0000, 0xFFFF0000, 0x00000000, 0xFFFF0000, 0xFFFF0000, 0xFFFF0000, 0xFFFF0000,
+  0xFFFF0000, 0xFFFF0000, 0xFFFF0000, 0x0000FFFF, 0xFFFF0000, 0xFFFF0000, 0xFFFF0000, 0xFFFFFFFF,
+  0xFFFF0000, 0xFFFF0000, 0x0000FFFF, 0x00000000, 0xFFFF0000, 0xFFFF0000, 0x0000FFFF, 0xFFFF0000,
+  0xFFFF0000, 0xFFFF0000, 0x0000FFFF, 0x0000FFFF, 0xFFFF0000, 0xFFFF0000, 0x0000FFFF, 0xFFFFFFFF,
+  0xFFFF0000, 0xFFFF0000, 0xFFFFFFFF, 0x00000000, 0xFFFF0000, 0xFFFF0000, 0xFFFFFFFF, 0xFFFF0000,
+  0xFFFF0000, 0xFFFF0000, 0xFFFFFFFF, 0x0000FFFF, 0xFFFF0000, 0xFFFF0000, 0xFFFFFFFF, 0xFFFFFFFF,
+  0xFFFF0000, 0x0000FFFF, 0x00000000, 0x00000000, 0xFFFF0000, 0x0000FFFF, 0x00000000, 0xFFFF0000,
+  0xFFFF0000, 0x0000FFFF, 0x00000000, 0x0000FFFF, 0xFFFF0000, 0x0000FFFF, 0x00000000, 0xFFFFFFFF,
+  0xFFFF0000, 0x0000FFFF, 0xFFFF0000, 0x00000000, 0xFFFF0000, 0x0000FFFF, 0xFFFF0000, 0xFFFF0000,
+  0xFFFF0000, 0x0000FFFF, 0xFFFF0000, 0x0000FFFF, 0xFFFF0000, 0x0000FFFF, 0xFFFF0000, 0xFFFFFFFF,
+  0xFFFF0000, 0x0000FFFF, 0x0000FFFF, 0x00000000, 0xFFFF0000, 0x0000FFFF, 0x0000FFFF, 0xFFFF0000,
+  0xFFFF0000, 0x0000FFFF, 0x0000FFFF, 0x0000FFFF, 0xFFFF0000, 0x0000FFFF, 0x0000FFFF, 0xFFFFFFFF,
+  0xFFFF0000, 0x0000FFFF, 0xFFFFFFFF, 0x00000000, 0xFFFF0000, 0x0000FFFF, 0xFFFFFFFF, 0xFFFF0000,
+  0xFFFF0000, 0x0000FFFF, 0xFFFFFFFF, 0x0000FFFF, 0xFFFF0000, 0x0000FFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+  0xFFFF0000, 0xFFFFFFFF, 0x00000000, 0x00000000, 0xFFFF0000, 0xFFFFFFFF, 0x00000000, 0xFFFF0000,
+  0xFFFF0000, 0xFFFFFFFF, 0x00000000, 0x0000FFFF, 0xFFFF0000, 0xFFFFFFFF, 0x00000000, 0xFFFFFFFF,
+  0xFFFF0000, 0xFFFFFFFF, 0xFFFF0000, 0x00000000, 0xFFFF0000, 0xFFFFFFFF, 0xFFFF0000, 0xFFFF0000,
+  0xFFFF0000, 0xFFFFFFFF, 0xFFFF0000, 0x0000FFFF, 0xFFFF0000, 0xFFFFFFFF, 0xFFFF0000, 0xFFFFFFFF,
+  0xFFFF0000, 0xFFFFFFFF, 0x0000FFFF, 0x00000000, 0xFFFF0000, 0xFFFFFFFF, 0x0000FFFF, 0xFFFF0000,
+  0xFFFF0000, 0xFFFFFFFF, 0x0000FFFF, 0x0000FFFF, 0xFFFF0000, 0xFFFFFFFF, 0x0000FFFF, 0xFFFFFFFF,
+  0xFFFF0000, 0xFFFFFFFF, 0xFFFFFFFF, 0x00000000, 0xFFFF0000, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFF0000,
+  0xFFFF0000, 0xFFFFFFFF, 0xFFFFFFFF, 0x0000FFFF, 0xFFFF0000, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+  0x0000FFFF, 0x00000000, 0x00000000, 0x00000000, 0x0000FFFF, 0x00000000, 0x00000000, 0xFFFF0000,
+  0x0000FFFF, 0x00000000, 0x00000000, 0x0000FFFF, 0x0000FFFF, 0x00000000, 0x00000000, 0xFFFFFFFF,
+  0x0000FFFF, 0x00000000, 0xFFFF0000, 0x00000000, 0x0000FFFF, 0x00000000, 0xFFFF0000, 0xFFFF0000,
+  0x0000FFFF, 0x00000000, 0xFFFF0000, 0x0000FFFF, 0x0000FFFF, 0x00000000, 0xFFFF0000, 0xFFFFFFFF,
+  0x0000FFFF, 0x00000000, 0x0000FFFF, 0x00000000, 0x0000FFFF, 0x00000000, 0x0000FFFF, 0xFFFF0000,
+  0x0000FFFF, 0x00000000, 0x0000FFFF, 0x0000FFFF, 0x0000FFFF, 0x00000000, 0x0000FFFF, 0xFFFFFFFF,
+  0x0000FFFF, 0x00000000, 0xFFFFFFFF, 0x00000000, 0x0000FFFF, 0x00000000, 0xFFFFFFFF, 0xFFFF0000,
+  0x0000FFFF, 0x00000000, 0xFFFFFFFF, 0x0000FFFF, 0x0000FFFF, 0x00000000, 0xFFFFFFFF, 0xFFFFFFFF,
+  0x0000FFFF, 0xFFFF0000, 0x00000000, 0x00000000, 0x0000FFFF, 0xFFFF0000, 0x00000000, 0xFFFF0000,
+  0x0000FFFF, 0xFFFF0000, 0x00000000, 0x0000FFFF, 0x0000FFFF, 0xFFFF0000, 0x00000000, 0xFFFFFFFF,
+  0x0000FFFF, 0xFFFF0000, 0xFFFF0000, 0x00000000, 0x0000FFFF, 0xFFFF0000, 0xFFFF0000, 0xFFFF0000,
+  0x0000FFFF, 0xFFFF0000, 0xFFFF0000, 0x0000FFFF, 0x0000FFFF, 0xFFFF0000, 0xFFFF0000, 0xFFFFFFFF,
+  0x0000FFFF, 0xFFFF0000, 0x0000FFFF, 0x00000000, 0x0000FFFF, 0xFFFF0000, 0x0000FFFF, 0xFFFF0000,
+  0x0000FFFF, 0xFFFF0000, 0x0000FFFF, 0x0000FFFF, 0x0000FFFF, 0xFFFF0000, 0x0000FFFF, 0xFFFFFFFF,
+  0x0000FFFF, 0xFFFF0000, 0xFFFFFFFF, 0x00000000, 0x0000FFFF, 0xFFFF0000, 0xFFFFFFFF, 0xFFFF0000,
+  0x0000FFFF, 0xFFFF0000, 0xFFFFFFFF, 0x0000FFFF, 0x0000FFFF, 0xFFFF0000, 0xFFFFFFFF, 0xFFFFFFFF,
+  0x0000FFFF, 0x0000FFFF, 0x00000000, 0x00000000, 0x0000FFFF, 0x0000FFFF, 0x00000000, 0xFFFF0000,
+  0x0000FFFF, 0x0000FFFF, 0x00000000, 0x0000FFFF, 0x0000FFFF, 0x0000FFFF, 0x00000000, 0xFFFFFFFF,
+  0x0000FFFF, 0x0000FFFF, 0xFFFF0000, 0x00000000, 0x0000FFFF, 0x0000FFFF, 0xFFFF0000, 0xFFFF0000,
+  0x0000FFFF, 0x0000FFFF, 0xFFFF0000, 0x0000FFFF, 0x0000FFFF, 0x0000FFFF, 0xFFFF0000, 0xFFFFFFFF,
+  0x0000FFFF, 0x0000FFFF, 0x0000FFFF, 0x00000000, 0x0000FFFF, 0x0000FFFF, 0x0000FFFF, 0xFFFF0000,
+  0x0000FFFF, 0x0000FFFF, 0x0000FFFF, 0x0000FFFF, 0x0000FFFF, 0x0000FFFF, 0x0000FFFF, 0xFFFFFFFF,
+  0x0000FFFF, 0x0000FFFF, 0xFFFFFFFF, 0x00000000, 0x0000FFFF, 0x0000FFFF, 0xFFFFFFFF, 0xFFFF0000,
+  0x0000FFFF, 0x0000FFFF, 0xFFFFFFFF, 0x0000FFFF, 0x0000FFFF, 0x0000FFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+  0x0000FFFF, 0xFFFFFFFF, 0x00000000, 0x00000000, 0x0000FFFF, 0xFFFFFFFF, 0x00000000, 0xFFFF0000,
+  0x0000FFFF, 0xFFFFFFFF, 0x00000000, 0x0000FFFF, 0x0000FFFF, 0xFFFFFFFF, 0x00000000, 0xFFFFFFFF,
+  0x0000FFFF, 0xFFFFFFFF, 0xFFFF0000, 0x00000000, 0x0000FFFF, 0xFFFFFFFF, 0xFFFF0000, 0xFFFF0000,
+  0x0000FFFF, 0xFFFFFFFF, 0xFFFF0000, 0x0000FFFF, 0x0000FFFF, 0xFFFFFFFF, 0xFFFF0000, 0xFFFFFFFF,
+  0x0000FFFF, 0xFFFFFFFF, 0x0000FFFF, 0x00000000, 0x0000FFFF, 0xFFFFFFFF, 0x0000FFFF, 0xFFFF0000,
+  0x0000FFFF, 0xFFFFFFFF, 0x0000FFFF, 0x0000FFFF, 0x0000FFFF, 0xFFFFFFFF, 0x0000FFFF, 0xFFFFFFFF,
+  0x0000FFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x00000000, 0x0000FFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFF0000,
+  0x0000FFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x0000FFFF, 0x0000FFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+  0xFFFFFFFF, 0x00000000, 0x00000000, 0x00000000, 0xFFFFFFFF, 0x00000000, 0x00000000, 0xFFFF0000,
+  0xFFFFFFFF, 0x00000000, 0x00000000, 0x0000FFFF, 0xFFFFFFFF, 0x00000000, 0x00000000, 0xFFFFFFFF,
+  0xFFFFFFFF, 0x00000000, 0xFFFF0000, 0x00000000, 0xFFFFFFFF, 0x00000000, 0xFFFF0000, 0xFFFF0000,
+  0xFFFFFFFF, 0x00000000, 0xFFFF0000, 0x0000FFFF, 0xFFFFFFFF, 0x00000000, 0xFFFF0000, 0xFFFFFFFF,
+  0xFFFFFFFF, 0x00000000, 0x0000FFFF, 0x00000000, 0xFFFFFFFF, 0x00000000, 0x0000FFFF, 0xFFFF0000,
+  0xFFFFFFFF, 0x00000000, 0x0000FFFF, 0x0000FFFF, 0xFFFFFFFF, 0x00000000, 0x0000FFFF, 0xFFFFFFFF,
+  0xFFFFFFFF, 0x00000000, 0xFFFFFFFF, 0x00000000, 0xFFFFFFFF, 0x00000000, 0xFFFFFFFF, 0xFFFF0000,
+  0xFFFFFFFF, 0x00000000, 0xFFFFFFFF, 0x0000FFFF, 0xFFFFFFFF, 0x00000000, 0xFFFFFFFF, 0xFFFFFFFF,
+  0xFFFFFFFF, 0xFFFF0000, 0x00000000, 0x00000000, 0xFFFFFFFF, 0xFFFF0000, 0x00000000, 0xFFFF0000,
+  0xFFFFFFFF, 0xFFFF0000, 0x00000000, 0x0000FFFF, 0xFFFFFFFF, 0xFFFF0000, 0x00000000, 0xFFFFFFFF,
+  0xFFFFFFFF, 0xFFFF0000, 0xFFFF0000, 0x00000000, 0xFFFFFFFF, 0xFFFF0000, 0xFFFF0000, 0xFFFF0000,
+  0xFFFFFFFF, 0xFFFF0000, 0xFFFF0000, 0x0000FFFF, 0xFFFFFFFF, 0xFFFF0000, 0xFFFF0000, 0xFFFFFFFF,
+  0xFFFFFFFF, 0xFFFF0000, 0x0000FFFF, 0x00000000, 0xFFFFFFFF, 0xFFFF0000, 0x0000FFFF, 0xFFFF0000,
+  0xFFFFFFFF, 0xFFFF0000, 0x0000FFFF, 0x0000FFFF, 0xFFFFFFFF, 0xFFFF0000, 0x0000FFFF, 0xFFFFFFFF,
+  0xFFFFFFFF, 0xFFFF0000, 0xFFFFFFFF, 0x00000000, 0xFFFFFFFF, 0xFFFF0000, 0xFFFFFFFF, 0xFFFF0000,
+  0xFFFFFFFF, 0xFFFF0000, 0xFFFFFFFF, 0x0000FFFF, 0xFFFFFFFF, 0xFFFF0000, 0xFFFFFFFF, 0xFFFFFFFF,
+  0xFFFFFFFF, 0x0000FFFF, 0x00000000, 0x00000000, 0xFFFFFFFF, 0x0000FFFF, 0x00000000, 0xFFFF0000,
+  0xFFFFFFFF, 0x0000FFFF, 0x00000000, 0x0000FFFF, 0xFFFFFFFF, 0x0000FFFF, 0x00000000, 0xFFFFFFFF,
+  0xFFFFFFFF, 0x0000FFFF, 0xFFFF0000, 0x00000000, 0xFFFFFFFF, 0x0000FFFF, 0xFFFF0000, 0xFFFF0000,
+  0xFFFFFFFF, 0x0000FFFF, 0xFFFF0000, 0x0000FFFF, 0xFFFFFFFF, 0x0000FFFF, 0xFFFF0000, 0xFFFFFFFF,
+  0xFFFFFFFF, 0x0000FFFF, 0x0000FFFF, 0x00000000, 0xFFFFFFFF, 0x0000FFFF, 0x0000FFFF, 0xFFFF0000,
+  0xFFFFFFFF, 0x0000FFFF, 0x0000FFFF, 0x0000FFFF, 0xFFFFFFFF, 0x0000FFFF, 0x0000FFFF, 0xFFFFFFFF,
+  0xFFFFFFFF, 0x0000FFFF, 0xFFFFFFFF, 0x00000000, 0xFFFFFFFF, 0x0000FFFF, 0xFFFFFFFF, 0xFFFF0000,
+  0xFFFFFFFF, 0x0000FFFF, 0xFFFFFFFF, 0x0000FFFF, 0xFFFFFFFF, 0x0000FFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+  0xFFFFFFFF, 0xFFFFFFFF, 0x00000000, 0x00000000, 0xFFFFFFFF, 0xFFFFFFFF, 0x00000000, 0xFFFF0000,
+  0xFFFFFFFF, 0xFFFFFFFF, 0x00000000, 0x0000FFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x00000000, 0xFFFFFFFF,
+  0xFFFFFFFF, 0xFFFFFFFF, 0xFFFF0000, 0x00000000, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFF0000, 0xFFFF0000,
+  0xFFFFFFFF, 0xFFFFFFFF, 0xFFFF0000, 0x0000FFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFF0000, 0xFFFFFFFF,
+  0xFFFFFFFF, 0xFFFFFFFF, 0x0000FFFF, 0x00000000, 0xFFFFFFFF, 0xFFFFFFFF, 0x0000FFFF, 0xFFFF0000,
+  0xFFFFFFFF, 0xFFFFFFFF, 0x0000FFFF, 0x0000FFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x0000FFFF, 0xFFFFFFFF,
+  0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x00000000, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFF0000,
+  0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x0000FFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+};
+
+// _mm_maskmoveu_si128(_mcolor, _mtemp, (char*)dst);
+#define solid_8_pixels(mask, dst, color)    \
+    do {                                     \
+        if (mask != 0)  {                         \
+            __m128i _mtemp  = _mm_load_si128((__m128i*)(solid_pixels_masks + (mask << 2))); \
+            __m128i _mcolor = _mm_set1_epi16((short)color);      \
+            __m128i _mvalue = _mm_loadu_si128((__m128i*)dst);    \
+            _mvalue = _mm_or_si128(_mvalue, _mtemp);    \
+            _mvalue = _mm_and_si128(_mvalue, _mm_or_si128(_mcolor, \
+            _mm_xor_si128(_mtemp, _mm_cmpeq_epi32(_mtemp, _mtemp)))); \
+            _mm_storeu_si128((__m128i *)dst, _mvalue);    \
+        }    \
+    } while (0)
+
+#else
+
 #define solid_8_pixels(mask, dst, color)    \
     do {                                    \
         if (mask & 0x80) dst[0] = color;    \
@@ -358,6 +510,7 @@ void SkRGB16_Opaque_Blitter::blitAntiH(int x, int y,
         if (mask & 0x02) dst[6] = color;    \
         if (mask & 0x01) dst[7] = color;    \
     } while (0)
+#endif // #ifdef USE_SSE2
 
 #define SK_BLITBWMASK_NAME                  SkRGB16_BlitBW
 #define SK_BLITBWMASK_ARGS                  , uint16_t color
@@ -381,7 +534,7 @@ void SkRGB16_Opaque_Blitter::blitMask(const SkMask& mask,
     const uint8_t* SK_RESTRICT alpha = mask.getAddr8(clip.fLeft, clip.fTop);
     int width = clip.width();
     int height = clip.height();
-    unsigned    deviceRB = fDevice.rowBytes() - (width << 1);
+    size_t      deviceRB = fDevice.rowBytes() - (width << 1);
     unsigned    maskRB = mask.fRowBytes - width;
     uint32_t    expanded32 = fExpandedRaw16;
 
@@ -390,63 +543,53 @@ void SkRGB16_Opaque_Blitter::blitMask(const SkMask& mask,
     do {
         int w = width;
         if (w >= UNROLL) {
-            uint32x4_t color;        /* can use same one */
-            uint32x4_t dev_lo, dev_hi;
-            uint32x4_t t1, t2;
-            uint32x4_t wn1, wn2;
-            uint16x4_t odev_lo, odev_hi;
-            uint16x4_t alpha_lo, alpha_hi;
-            uint16x8_t  alpha_full;
+            uint32x4_t color, dev_lo, dev_hi;
+            uint32x4_t wn1, wn2, tmp;
+            uint32x4_t vmask_g16, vmask_ng16;
+            uint16x8_t valpha, vdev;
+            uint16x4_t odev_lo, odev_hi, valpha_lo, valpha_hi;
 
+            // prepare constants
+            vmask_g16 = vdupq_n_u32(SK_G16_MASK_IN_PLACE);
+            vmask_ng16 = vdupq_n_u32(~SK_G16_MASK_IN_PLACE);
             color = vdupq_n_u32(expanded32);
 
             do {
-                /* alpha is 8x8, widen and split to get pair of 16x4's */
-                alpha_full = vmovl_u8(vld1_u8(alpha));
-                alpha_full = vaddq_u16(alpha_full, vshrq_n_u16(alpha_full,7));
-                alpha_full = vshrq_n_u16(alpha_full, 3);
-                alpha_lo = vget_low_u16(alpha_full);
-                alpha_hi = vget_high_u16(alpha_full);
+                // alpha is 8x8, widen and split to get a pair of 16x4
+                valpha = vaddw_u8(vdupq_n_u16(1), vld1_u8(alpha));
+                valpha = vshrq_n_u16(valpha, 3);
+                valpha_lo = vget_low_u16(valpha);
+                valpha_hi = vget_high_u16(valpha);
 
-                dev_lo = vmovl_u16(vld1_u16(device));
-                dev_hi = vmovl_u16(vld1_u16(device+4));
+                // load pixels
+                vdev = vld1q_u16(device);
+                dev_lo = vmovl_u16(vget_low_u16(vdev));
+                dev_hi = vmovl_u16(vget_high_u16(vdev));
 
-                /* unpack in 32 bits */
-                dev_lo = vorrq_u32(
-                                   vandq_u32(dev_lo, vdupq_n_u32(0x0000F81F)),
-                                   vshlq_n_u32(vandq_u32(dev_lo,
-                                                         vdupq_n_u32(0x000007E0)),
-                                               16)
-                                   );
-                dev_hi = vorrq_u32(
-                                   vandq_u32(dev_hi, vdupq_n_u32(0x0000F81F)),
-                                   vshlq_n_u32(vandq_u32(dev_hi,
-                                                         vdupq_n_u32(0x000007E0)),
-                                               16)
-                                   );
+                // unpack them in 32 bits
+                dev_lo = (dev_lo & vmask_ng16) | vshlq_n_u32(dev_lo & vmask_g16, 16);
+                dev_hi = (dev_hi & vmask_ng16) | vshlq_n_u32(dev_hi & vmask_g16, 16);
 
-                /* blend the two */
-                t1 = vmulq_u32(vsubq_u32(color, dev_lo), vmovl_u16(alpha_lo));
-                t1 = vshrq_n_u32(t1, 5);
-                dev_lo = vaddq_u32(dev_lo, t1);
+                // blend with color
+                tmp = (color - dev_lo) * vmovl_u16(valpha_lo);
+                tmp = vshrq_n_u32(tmp, 5);
+                dev_lo += tmp;
 
-                t1 = vmulq_u32(vsubq_u32(color, dev_hi), vmovl_u16(alpha_hi));
-                t1 = vshrq_n_u32(t1, 5);
-                dev_hi = vaddq_u32(dev_hi, t1);
+                tmp = vmulq_u32(color - dev_hi, vmovl_u16(valpha_hi));
+                tmp = vshrq_n_u32(tmp, 5);
+                dev_hi += tmp;
 
-                /* re-compact and store */
-                wn1 = vandq_u32(dev_lo, vdupq_n_u32(0x0000F81F)),
-                wn2 = vshrq_n_u32(dev_lo, 16);
-                wn2 = vandq_u32(wn2, vdupq_n_u32(0x000007E0));
-                odev_lo = vmovn_u32(vorrq_u32(wn1, wn2));
+                // re-compact
+                wn1 = dev_lo & vmask_ng16;
+                wn2 = vshrq_n_u32(dev_lo, 16) & vmask_g16;
+                odev_lo = vmovn_u32(wn1 | wn2);
 
-                wn1 = vandq_u32(dev_hi, vdupq_n_u32(0x0000F81F)),
-                wn2 = vshrq_n_u32(dev_hi, 16);
-                wn2 = vandq_u32(wn2, vdupq_n_u32(0x000007E0));
-                odev_hi = vmovn_u32(vorrq_u32(wn1, wn2));
+                wn1 = dev_hi & vmask_ng16;
+                wn2 = vshrq_n_u32(dev_hi, 16) & vmask_g16;
+                odev_hi = vmovn_u32(wn1 | wn2);
 
-                vst1_u16(device, odev_lo);
-                vst1_u16(device+4, odev_hi);
+                // store
+                vst1q_u16(device, vcombine_u16(odev_lo, odev_hi));
 
                 device += UNROLL;
                 alpha += UNROLL;
@@ -454,7 +597,7 @@ void SkRGB16_Opaque_Blitter::blitMask(const SkMask& mask,
             } while (w >= UNROLL);
         }
 
-        /* residuals (which is everything if we have no neon) */
+        // residuals
         while (w > 0) {
             *device = blend_compact(expanded32, SkExpand_rgb_16(*device),
                                     SkAlpha255To256(*alpha++) >> 3);
@@ -481,7 +624,7 @@ void SkRGB16_Opaque_Blitter::blitMask(const SkMask& mask,
 
 void SkRGB16_Opaque_Blitter::blitV(int x, int y, int height, SkAlpha alpha) {
     uint16_t* SK_RESTRICT device = fDevice.getAddr16(x, y);
-    unsigned    deviceRB = fDevice.rowBytes();
+    size_t    deviceRB = fDevice.rowBytes();
 
     // TODO: respect fDoDither
     unsigned scale5 = SkAlpha255To256(alpha) >> 3;
@@ -497,7 +640,7 @@ void SkRGB16_Opaque_Blitter::blitV(int x, int y, int height, SkAlpha alpha) {
 void SkRGB16_Opaque_Blitter::blitRect(int x, int y, int width, int height) {
     SkASSERT(x + width <= fDevice.width() && y + height <= fDevice.height());
     uint16_t* SK_RESTRICT device = fDevice.getAddr16(x, y);
-    unsigned    deviceRB = fDevice.rowBytes();
+    size_t      deviceRB = fDevice.rowBytes();
     uint16_t    color16 = fColor16;
 
     if (fDoDither) {
@@ -641,7 +784,7 @@ void SkRGB16_Blitter::blitMask(const SkMask& mask,
     const uint8_t* SK_RESTRICT alpha = mask.getAddr8(clip.fLeft, clip.fTop);
     int width = clip.width();
     int height = clip.height();
-    unsigned    deviceRB = fDevice.rowBytes() - (width << 1);
+    size_t      deviceRB = fDevice.rowBytes() - (width << 1);
     unsigned    maskRB = mask.fRowBytes - width;
     uint32_t    color32 = fExpandedRaw16;
 
@@ -662,7 +805,7 @@ void SkRGB16_Blitter::blitMask(const SkMask& mask,
 
 void SkRGB16_Blitter::blitV(int x, int y, int height, SkAlpha alpha) {
     uint16_t* SK_RESTRICT device = fDevice.getAddr16(x, y);
-    unsigned    deviceRB = fDevice.rowBytes();
+    size_t    deviceRB = fDevice.rowBytes();
 
     // TODO: respect fDoDither
     unsigned scale5 = SkAlpha255To256(alpha) * fScale >> (8 + 3);
@@ -678,7 +821,7 @@ void SkRGB16_Blitter::blitV(int x, int y, int height, SkAlpha alpha) {
 void SkRGB16_Blitter::blitRect(int x, int y, int width, int height) {
     SkASSERT(x + width <= fDevice.width() && y + height <= fDevice.height());
     uint16_t* SK_RESTRICT device = fDevice.getAddr16(x, y);
-    unsigned    deviceRB = fDevice.rowBytes();
+    size_t    deviceRB = fDevice.rowBytes();
     SkPMColor src32 = fSrcColor32;
 
     while (--height >= 0) {
@@ -826,7 +969,7 @@ SkRGB16_Shader_Blitter::SkRGB16_Shader_Blitter(const SkBitmap& device,
     // shaders take care of global alpha, so we never set it in SkBlitRow
     if (!(shaderFlags & SkShader::kOpaqueAlpha_Flag)) {
         flags |= SkBlitRow::kSrcPixelAlpha_Flag;
-        }
+    }
     // don't dither if the shader is really 16bit
     if (paint.isDither() && !(shaderFlags & SkShader::kIntrinsicly16_Flag)) {
         flags |= SkBlitRow::kDither_Flag;

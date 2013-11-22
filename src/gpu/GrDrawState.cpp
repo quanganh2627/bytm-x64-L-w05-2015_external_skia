@@ -6,38 +6,55 @@
  */
 
 #include "GrDrawState.h"
-
-#include "GrGpuVertex.h"
 #include "GrPaint.h"
 
-void GrDrawState::setFromPaint(const GrPaint& paint) {
-    for (int i = 0; i < GrPaint::kMaxColorStages; ++i) {
-        int s = i + GrPaint::kFirstColorStage;
-        if (paint.isColorStageEnabled(i)) {
-            fStages[s] = paint.getColorStage(i);
-        } else {
-            fStages[s].setEffect(NULL);
+bool GrDrawState::setIdentityViewMatrix()  {
+    if (fColorStages.count() || fCoverageStages.count()) {
+        SkMatrix invVM;
+        if (!fCommon.fViewMatrix.invert(&invVM)) {
+            // sad trombone sound
+            return false;
+        }
+        for (int s = 0; s < fColorStages.count(); ++s) {
+            fColorStages[s].localCoordChange(invVM);
+        }
+        for (int s = 0; s < fCoverageStages.count(); ++s) {
+            fCoverageStages[s].localCoordChange(invVM);
         }
     }
+    fCommon.fViewMatrix.reset();
+    return true;
+}
 
-    this->setFirstCoverageStage(GrPaint::kFirstCoverageStage);
+void GrDrawState::setFromPaint(const GrPaint& paint, const SkMatrix& vm, GrRenderTarget* rt) {
+    GrAssert(0 == fBlockEffectRemovalCnt || 0 == this->numTotalStages());
 
-    for (int i = 0; i < GrPaint::kMaxCoverageStages; ++i) {
-        int s = i + GrPaint::kFirstCoverageStage;
-        if (paint.isCoverageStageEnabled(i)) {
-            fStages[s] = paint.getCoverageStage(i);
-        } else {
-            fStages[s].setEffect(NULL);
-        }
+    fColorStages.reset();
+    fCoverageStages.reset();
+
+    for (int i = 0; i < paint.numColorStages(); ++i) {
+        fColorStages.push_back(paint.getColorStage(i));
     }
 
-    // disable all stages not accessible via the paint
-    for (int s = GrPaint::kTotalStages; s < GrDrawState::kNumStages; ++s) {
-        this->disableStage(s);
+    for (int i = 0; i < paint.numCoverageStages(); ++i) {
+        fCoverageStages.push_back(paint.getCoverageStage(i));
     }
+
+    this->setRenderTarget(rt);
+
+    fCommon.fViewMatrix = vm;
+
+    // These have no equivalent in GrPaint, set them to defaults
+    fCommon.fBlendConstant = 0x0;
+    fCommon.fDrawFace = kBoth_DrawFace;
+    fCommon.fStencilSettings.setDisabled();
+    this->resetStateFlags();
+
+    // Enable the clip bit
+    this->enableState(GrDrawState::kClip_StateBit);
 
     this->setColor(paint.getColor());
-
+    this->setCoverage4(paint.getCoverage());
     this->setState(GrDrawState::kDither_StateBit, paint.isDither());
     this->setState(GrDrawState::kHWAntialias_StateBit, paint.isAntiAlias());
 
@@ -48,457 +65,158 @@ void GrDrawState::setFromPaint(const GrPaint& paint) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-namespace {
-
-/**
- * This function generates some masks that we like to have known at compile
- * time. When the number of stages or tex coords is bumped or the way bits
- * are defined in GrDrawState.h changes this function should be rerun to
- * generate the new masks. (We attempted to force the compiler to generate the
- * masks using recursive templates but always wound up with static initializers
- * under gcc, even if they were just a series of immediate->memory moves.)
- *
- */
-void gen_mask_arrays(GrVertexLayout* stageTexCoordMasks,
-                     GrVertexLayout* texCoordMasks) {
-    for (int s = 0; s < GrDrawState::kNumStages; ++s) {
-        stageTexCoordMasks[s] = 0;
-        for (int t = 0; t < GrDrawState::kMaxTexCoords; ++t) {
-            stageTexCoordMasks[s] |= GrDrawState::StageTexCoordVertexLayoutBit(s, t);
-        }
-    }
-    for (int t = 0; t < GrDrawState::kMaxTexCoords; ++t) {
-        texCoordMasks[t] = 0;
-        for (int s = 0; s < GrDrawState::kNumStages; ++s) {
-            texCoordMasks[t] |= GrDrawState::StageTexCoordVertexLayoutBit(s, t);
-        }
-    }
-}
-
-/**
- * Uncomment and run the gen_globals function to generate
- * the code that declares the global masks.
- *
- * #if 0'ed out to avoid unused function warning.
- */
-
-#if 0
-void gen_globals() {
-    GrVertexLayout stageTexCoordMasks[GrDrawState::kNumStages];
-    GrVertexLayout texCoordMasks[GrDrawState::kMaxTexCoords];
-    gen_mask_arrays(stageTexCoordMasks, texCoordMasks);
-
-    GrPrintf("const GrVertexLayout gStageTexCoordMasks[] = {\n");
-    for (int s = 0; s < GrDrawState::kNumStages; ++s) {
-        GrPrintf("    0x%x,\n", stageTexCoordMasks[s]);
-    }
-    GrPrintf("};\n");
-    GrPrintf("GR_STATIC_ASSERT(GrDrawState::kNumStages == GR_ARRAY_COUNT(gStageTexCoordMasks));\n\n");
-    GrPrintf("const GrVertexLayout gTexCoordMasks[] = {\n");
-    for (int t = 0; t < GrDrawState::kMaxTexCoords; ++t) {
-        GrPrintf("    0x%x,\n", texCoordMasks[t]);
-    }
-    GrPrintf("};\n");
-    GrPrintf("GR_STATIC_ASSERT(GrDrawState::kMaxTexCoords == GR_ARRAY_COUNT(gTexCoordMasks));\n");
-}
+static size_t vertex_size(const GrVertexAttrib* attribs, int count) {
+    // this works as long as we're 4 byte-aligned
+#if GR_DEBUG
+    uint32_t overlapCheck = 0;
 #endif
+    GrAssert(count <= GrDrawState::kMaxVertexAttribCnt);
+    size_t size = 0;
+    for (int index = 0; index < count; ++index) {
+        size_t attribSize = GrVertexAttribTypeSize(attribs[index].fType);
+        size += attribSize;
+#if GR_DEBUG
+        size_t dwordCount = attribSize >> 2;
+        uint32_t mask = (1 << dwordCount)-1;
+        size_t offsetShift = attribs[index].fOffset >> 2;
+        GrAssert(!(overlapCheck & (mask << offsetShift)));
+        overlapCheck |= (mask << offsetShift);
+#endif
+    }
+    return size;
+}
 
-/* These values were generated by the above function */
+size_t GrDrawState::getVertexSize() const {
+    return vertex_size(fCommon.fVAPtr, fCommon.fVACount);
+}
 
-const GrVertexLayout gStageTexCoordMasks[] = {
-    0x108421,
-    0x210842,
-    0x421084,
-    0x842108,
-    0x1084210,
-};
-GR_STATIC_ASSERT(GrDrawState::kNumStages == GR_ARRAY_COUNT(gStageTexCoordMasks));
+////////////////////////////////////////////////////////////////////////////////
 
-const GrVertexLayout gTexCoordMasks[] = {
-    0x1f,
-    0x3e0,
-    0x7c00,
-    0xf8000,
-    0x1f00000,
-};
-GR_STATIC_ASSERT(GrDrawState::kMaxTexCoords == GR_ARRAY_COUNT(gTexCoordMasks));
+void GrDrawState::setVertexAttribs(const GrVertexAttrib* attribs, int count) {
+    GrAssert(count <= kMaxVertexAttribCnt);
 
-#ifdef SK_DEBUG
-bool check_layout(GrVertexLayout layout) {
-    // can only have 1 or 0 bits set for each stage.
-    for (int s = 0; s < GrDrawState::kNumStages; ++s) {
-        int stageBits = layout & gStageTexCoordMasks[s];
-        if (stageBits && !GrIsPow2(stageBits)) {
-            return false;
+    fCommon.fVAPtr = attribs;
+    fCommon.fVACount = count;
+
+    // Set all the indices to -1
+    memset(fCommon.fFixedFunctionVertexAttribIndices,
+           0xff,
+           sizeof(fCommon.fFixedFunctionVertexAttribIndices));
+#if GR_DEBUG
+    uint32_t overlapCheck = 0;
+#endif
+    for (int i = 0; i < count; ++i) {
+        if (attribs[i].fBinding < kGrFixedFunctionVertexAttribBindingCnt) {
+            // The fixed function attribs can only be specified once
+            GrAssert(-1 == fCommon.fFixedFunctionVertexAttribIndices[attribs[i].fBinding]);
+            GrAssert(GrFixedFunctionVertexAttribVectorCount(attribs[i].fBinding) ==
+                     GrVertexAttribTypeVectorCount(attribs[i].fType));
+            fCommon.fFixedFunctionVertexAttribIndices[attribs[i].fBinding] = i;
+        }
+#if GR_DEBUG
+        size_t dwordCount = GrVertexAttribTypeSize(attribs[i].fType) >> 2;
+        uint32_t mask = (1 << dwordCount)-1;
+        size_t offsetShift = attribs[i].fOffset >> 2;
+        GrAssert(!(overlapCheck & (mask << offsetShift)));
+        overlapCheck |= (mask << offsetShift);
+#endif
+    }
+    // Positions must be specified.
+    GrAssert(-1 != fCommon.fFixedFunctionVertexAttribIndices[kPosition_GrVertexAttribBinding]);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+void GrDrawState::setDefaultVertexAttribs() {
+    static const GrVertexAttrib kPositionAttrib =
+        {kVec2f_GrVertexAttribType, 0, kPosition_GrVertexAttribBinding};
+
+    fCommon.fVAPtr = &kPositionAttrib;
+    fCommon.fVACount = 1;
+
+    // set all the fixed function indices to -1 except position.
+    memset(fCommon.fFixedFunctionVertexAttribIndices,
+           0xff,
+           sizeof(fCommon.fFixedFunctionVertexAttribIndices));
+    fCommon.fFixedFunctionVertexAttribIndices[kPosition_GrVertexAttribBinding] = 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+bool GrDrawState::validateVertexAttribs() const {
+    // check consistency of effects and attributes
+    GrSLType slTypes[kMaxVertexAttribCnt];
+    for (int i = 0; i < kMaxVertexAttribCnt; ++i) {
+        slTypes[i] = static_cast<GrSLType>(-1);
+    }
+    int totalStages = fColorStages.count() + fCoverageStages.count();
+    for (int s = 0; s < totalStages; ++s) {
+        int covIdx = s - fColorStages.count();
+        const GrEffectStage& stage = covIdx < 0 ? fColorStages[s] : fCoverageStages[covIdx];
+        const GrEffectRef* effect = stage.getEffect();
+        GrAssert(NULL != effect);
+        // make sure that any attribute indices have the correct binding type, that the attrib
+        // type and effect's shader lang type are compatible, and that attributes shared by
+        // multiple effects use the same shader lang type.
+        const int* attributeIndices = stage.getVertexAttribIndices();
+        int numAttributes = stage.getVertexAttribIndexCount();
+        for (int i = 0; i < numAttributes; ++i) {
+            int attribIndex = attributeIndices[i];
+            if (attribIndex >= fCommon.fVACount ||
+                kEffect_GrVertexAttribBinding != fCommon.fVAPtr[attribIndex].fBinding) {
+                return false;
+            }
+
+            GrSLType effectSLType = (*effect)->vertexAttribType(i);
+            GrVertexAttribType attribType = fCommon.fVAPtr[attribIndex].fType;
+            int slVecCount = GrSLTypeVectorCount(effectSLType);
+            int attribVecCount = GrVertexAttribTypeVectorCount(attribType);
+            if (slVecCount != attribVecCount ||
+                (static_cast<GrSLType>(-1) != slTypes[attribIndex] &&
+                    slTypes[attribIndex] != effectSLType)) {
+                return false;
+            }
+            slTypes[attribIndex] = effectSLType;
         }
     }
+
     return true;
 }
-#endif
 
-int num_tex_coords(GrVertexLayout layout) {
-    int cnt = 0;
-    // figure out how many tex coordinates are present
-    for (int t = 0; t < GrDrawState::kMaxTexCoords; ++t) {
-        if (gTexCoordMasks[t] & layout) {
-            ++cnt;
+bool GrDrawState::willEffectReadDstColor() const {
+    if (!this->isColorWriteDisabled()) {
+        for (int s = 0; s < fColorStages.count(); ++s) {
+            if ((*fColorStages[s].getEffect())->willReadDstColor()) {
+                return true;
+            }
         }
     }
-    return cnt;
-}
-
-} //unnamed namespace
-
-size_t GrDrawState::VertexSize(GrVertexLayout vertexLayout) {
-    GrAssert(check_layout(vertexLayout));
-
-    size_t vecSize = (vertexLayout & kTextFormat_VertexLayoutBit) ?
-                        sizeof(GrGpuTextVertex) :
-                        sizeof(GrPoint);
-
-    size_t size = vecSize; // position
-    size += num_tex_coords(vertexLayout) * vecSize;
-    if (vertexLayout & kColor_VertexLayoutBit) {
-        size += sizeof(GrColor);
+    for (int s = 0; s < fCoverageStages.count(); ++s) {
+        if ((*fCoverageStages[s].getEffect())->willReadDstColor()) {
+            return true;
+        }
     }
-    if (vertexLayout & kCoverage_VertexLayoutBit) {
-        size += sizeof(GrColor);
-    }
-    if (vertexLayout & kEdge_VertexLayoutBit) {
-        size += 4 * sizeof(SkScalar);
-    }
-    return size;
+    return false;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-/**
- * Functions for computing offsets of various components from the layout
- * bitfield.
- *
- * Order of vertex components:
- * Position
- * Tex Coord 0
- * ...
- * Tex Coord GrDrawState::kMaxTexCoords-1
- * Color
- * Coverage
- */
-
-int GrDrawState::VertexStageCoordOffset(int stageIdx, GrVertexLayout vertexLayout) {
-    GrAssert(check_layout(vertexLayout));
-
-    if (!StageUsesTexCoords(vertexLayout, stageIdx)) {
-        return 0;
-    }
-    int tcIdx = VertexTexCoordsForStage(stageIdx, vertexLayout);
-    if (tcIdx >= 0) {
-
-        int vecSize = (vertexLayout & kTextFormat_VertexLayoutBit) ?
-                                    sizeof(GrGpuTextVertex) :
-                                    sizeof(GrPoint);
-        int offset = vecSize; // position
-        // figure out how many tex coordinates are present and precede this one.
-        for (int t = 0; t < tcIdx; ++t) {
-            if (gTexCoordMasks[t] & vertexLayout) {
-                offset += vecSize;
-            }
-        }
-        return offset;
-    }
-
-    return -1;
-}
-
-int GrDrawState::VertexColorOffset(GrVertexLayout vertexLayout) {
-    GrAssert(check_layout(vertexLayout));
-
-    if (vertexLayout & kColor_VertexLayoutBit) {
-        int vecSize = (vertexLayout & kTextFormat_VertexLayoutBit) ?
-                                    sizeof(GrGpuTextVertex) :
-                                    sizeof(GrPoint);
-        return vecSize * (num_tex_coords(vertexLayout) + 1); //+1 for pos
-    }
-    return -1;
-}
-
-int GrDrawState::VertexCoverageOffset(GrVertexLayout vertexLayout) {
-    GrAssert(check_layout(vertexLayout));
-
-    if (vertexLayout & kCoverage_VertexLayoutBit) {
-        int vecSize = (vertexLayout & kTextFormat_VertexLayoutBit) ?
-                                    sizeof(GrGpuTextVertex) :
-                                    sizeof(GrPoint);
-
-        int offset = vecSize * (num_tex_coords(vertexLayout) + 1);
-        if (vertexLayout & kColor_VertexLayoutBit) {
-            offset += sizeof(GrColor);
-        }
-        return offset;
-    }
-    return -1;
-}
-
-int GrDrawState::VertexEdgeOffset(GrVertexLayout vertexLayout) {
-    GrAssert(check_layout(vertexLayout));
-
-    // edge pts are after the pos, tex coords, and color
-    if (vertexLayout & kEdge_VertexLayoutBit) {
-        int vecSize = (vertexLayout & kTextFormat_VertexLayoutBit) ?
-                                    sizeof(GrGpuTextVertex) :
-                                    sizeof(GrPoint);
-        int offset = vecSize * (num_tex_coords(vertexLayout) + 1); //+1 for pos
-        if (vertexLayout & kColor_VertexLayoutBit) {
-            offset += sizeof(GrColor);
-        }
-        if (vertexLayout & kCoverage_VertexLayoutBit) {
-            offset += sizeof(GrColor);
-        }
-        return offset;
-    }
-    return -1;
-}
-
-int GrDrawState::VertexSizeAndOffsetsByIdx(
-        GrVertexLayout vertexLayout,
-        int texCoordOffsetsByIdx[kMaxTexCoords],
-        int* colorOffset,
-        int* coverageOffset,
-        int* edgeOffset) {
-    GrAssert(check_layout(vertexLayout));
-
-    int vecSize = (vertexLayout & kTextFormat_VertexLayoutBit) ?
-                                                    sizeof(GrGpuTextVertex) :
-                                                    sizeof(GrPoint);
-    int size = vecSize; // position
-
-    for (int t = 0; t < kMaxTexCoords; ++t) {
-        if (gTexCoordMasks[t] & vertexLayout) {
-            if (NULL != texCoordOffsetsByIdx) {
-                texCoordOffsetsByIdx[t] = size;
-            }
-            size += vecSize;
-        } else {
-            if (NULL != texCoordOffsetsByIdx) {
-                texCoordOffsetsByIdx[t] = -1;
-            }
-        }
-    }
-    if (kColor_VertexLayoutBit & vertexLayout) {
-        if (NULL != colorOffset) {
-            *colorOffset = size;
-        }
-        size += sizeof(GrColor);
-    } else {
-        if (NULL != colorOffset) {
-            *colorOffset = -1;
-        }
-    }
-    if (kCoverage_VertexLayoutBit & vertexLayout) {
-        if (NULL != coverageOffset) {
-            *coverageOffset = size;
-        }
-        size += sizeof(GrColor);
-    } else {
-        if (NULL != coverageOffset) {
-            *coverageOffset = -1;
-        }
-    }
-    if (kEdge_VertexLayoutBit & vertexLayout) {
-        if (NULL != edgeOffset) {
-            *edgeOffset = size;
-        }
-        size += 4 * sizeof(SkScalar);
-    } else {
-        if (NULL != edgeOffset) {
-            *edgeOffset = -1;
-        }
-    }
-    return size;
-}
-
-int GrDrawState::VertexSizeAndOffsetsByStage(
-        GrVertexLayout vertexLayout,
-        int texCoordOffsetsByStage[GrDrawState::kNumStages],
-        int* colorOffset,
-        int* coverageOffset,
-        int* edgeOffset) {
-    GrAssert(check_layout(vertexLayout));
-
-    int texCoordOffsetsByIdx[kMaxTexCoords];
-    int size = VertexSizeAndOffsetsByIdx(vertexLayout,
-                                         (NULL == texCoordOffsetsByStage) ?
-                                               NULL :
-                                               texCoordOffsetsByIdx,
-                                         colorOffset,
-                                         coverageOffset,
-                                         edgeOffset);
-    if (NULL != texCoordOffsetsByStage) {
-        for (int s = 0; s < GrDrawState::kNumStages; ++s) {
-            int tcIdx = VertexTexCoordsForStage(s, vertexLayout);
-            texCoordOffsetsByStage[s] =
-                tcIdx < 0 ? 0 : texCoordOffsetsByIdx[tcIdx];
-        }
-    }
-    return size;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-bool GrDrawState::VertexUsesTexCoordIdx(int coordIndex,
-                                         GrVertexLayout vertexLayout) {
-    GrAssert(coordIndex < kMaxTexCoords);
-    GrAssert(check_layout(vertexLayout));
-    return !!(gTexCoordMasks[coordIndex] & vertexLayout);
-}
-
-int GrDrawState::VertexTexCoordsForStage(int stageIdx,
-                                          GrVertexLayout vertexLayout) {
-    GrAssert(stageIdx < GrDrawState::kNumStages);
-    GrAssert(check_layout(vertexLayout));
-    int bit = vertexLayout & gStageTexCoordMasks[stageIdx];
-    if (bit) {
-        // figure out which set of texture coordates is used
-        // bits are ordered T0S0, T0S1, T0S2, ..., T1S0, T1S1, ...
-        // and start at bit 0.
-        GR_STATIC_ASSERT(sizeof(GrVertexLayout) <= sizeof(uint32_t));
-        return (32 - SkCLZ(bit) - 1) / GrDrawState::kNumStages;
-    }
-    return -1;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-void GrDrawState::VertexLayoutUnitTest() {
-    // Ensure that our globals mask arrays are correct
-    GrVertexLayout stageTexCoordMasks[GrDrawState::kNumStages];
-    GrVertexLayout texCoordMasks[kMaxTexCoords];
-    gen_mask_arrays(stageTexCoordMasks, texCoordMasks);
-    for (int s = 0; s < GrDrawState::kNumStages; ++s) {
-        GrAssert(stageTexCoordMasks[s] == gStageTexCoordMasks[s]);
-    }
-    for (int t = 0; t < kMaxTexCoords; ++t) {
-        GrAssert(texCoordMasks[t] == gTexCoordMasks[t]);
-    }
-
-    // not necessarily exhaustive
-    static bool run;
-    if (!run) {
-        run = true;
-        for (int s = 0; s < GrDrawState::kNumStages; ++s) {
-
-            GrVertexLayout stageMask = 0;
-            for (int t = 0; t < kMaxTexCoords; ++t) {
-                stageMask |= StageTexCoordVertexLayoutBit(s,t);
-            }
-            GrAssert(1 == kMaxTexCoords ||
-                     !check_layout(stageMask));
-            GrAssert(gStageTexCoordMasks[s] == stageMask);
-            GrAssert(!check_layout(stageMask));
-        }
-        for (int t = 0; t < kMaxTexCoords; ++t) {
-            GrVertexLayout tcMask = 0;
-            GrAssert(!VertexUsesTexCoordIdx(t, 0));
-            for (int s = 0; s < GrDrawState::kNumStages; ++s) {
-                tcMask |= StageTexCoordVertexLayoutBit(s,t);
-                GrAssert(sizeof(GrPoint) == VertexStageCoordOffset(s, tcMask));
-                GrAssert(VertexUsesTexCoordIdx(t, tcMask));
-                GrAssert(2*sizeof(GrPoint) == VertexSize(tcMask));
-                GrAssert(t == VertexTexCoordsForStage(s, tcMask));
-                for (int s2 = s + 1; s2 < GrDrawState::kNumStages; ++s2) {
-                    GrAssert(-1 == VertexTexCoordsForStage(s2, tcMask));
-
-                #if GR_DEBUG
-                    GrVertexLayout posAsTex = tcMask;
-                #endif
-                    GrAssert(0 == VertexStageCoordOffset(s2, posAsTex));
-                    GrAssert(2*sizeof(GrPoint) == VertexSize(posAsTex));
-                    GrAssert(-1 == VertexTexCoordsForStage(s2, posAsTex));
-                    GrAssert(-1 == VertexEdgeOffset(posAsTex));
-                }
-                GrAssert(-1 == VertexEdgeOffset(tcMask));
-                GrAssert(-1 == VertexColorOffset(tcMask));
-                GrAssert(-1 == VertexCoverageOffset(tcMask));
-            #if GR_DEBUG
-                GrVertexLayout withColor = tcMask | kColor_VertexLayoutBit;
-            #endif
-                GrAssert(-1 == VertexCoverageOffset(withColor));
-                GrAssert(2*sizeof(GrPoint) == VertexColorOffset(withColor));
-                GrAssert(2*sizeof(GrPoint) + sizeof(GrColor) == VertexSize(withColor));
-            #if GR_DEBUG
-                GrVertexLayout withEdge = tcMask | kEdge_VertexLayoutBit;
-            #endif
-                GrAssert(-1 == VertexColorOffset(withEdge));
-                GrAssert(2*sizeof(GrPoint) == VertexEdgeOffset(withEdge));
-                GrAssert(4*sizeof(GrPoint) == VertexSize(withEdge));
-            #if GR_DEBUG
-                GrVertexLayout withColorAndEdge = withColor | kEdge_VertexLayoutBit;
-            #endif
-                GrAssert(2*sizeof(GrPoint) == VertexColorOffset(withColorAndEdge));
-                GrAssert(2*sizeof(GrPoint) + sizeof(GrColor) == VertexEdgeOffset(withColorAndEdge));
-                GrAssert(4*sizeof(GrPoint) + sizeof(GrColor) == VertexSize(withColorAndEdge));
-            #if GR_DEBUG
-                GrVertexLayout withCoverage = tcMask | kCoverage_VertexLayoutBit;
-            #endif
-                GrAssert(-1 == VertexColorOffset(withCoverage));
-                GrAssert(2*sizeof(GrPoint) == VertexCoverageOffset(withCoverage));
-                GrAssert(2*sizeof(GrPoint) + sizeof(GrColor) == VertexSize(withCoverage));
-            #if GR_DEBUG
-                GrVertexLayout withCoverageAndColor = tcMask | kCoverage_VertexLayoutBit |
-                                                      kColor_VertexLayoutBit;
-            #endif
-                GrAssert(2*sizeof(GrPoint) == VertexColorOffset(withCoverageAndColor));
-                GrAssert(2*sizeof(GrPoint) + sizeof(GrColor) == VertexCoverageOffset(withCoverageAndColor));
-                GrAssert(2*sizeof(GrPoint) + 2 * sizeof(GrColor) == VertexSize(withCoverageAndColor));
-            }
-            GrAssert(gTexCoordMasks[t] == tcMask);
-            GrAssert(check_layout(tcMask));
-
-            int stageOffsets[GrDrawState::kNumStages];
-            int colorOffset;
-            int edgeOffset;
-            int coverageOffset;
-            int size;
-            size = VertexSizeAndOffsetsByStage(tcMask,
-                                               stageOffsets, &colorOffset,
-                                               &coverageOffset, &edgeOffset);
-            GrAssert(2*sizeof(GrPoint) == size);
-            GrAssert(-1 == colorOffset);
-            GrAssert(-1 == coverageOffset);
-            GrAssert(-1 == edgeOffset);
-            for (int s = 0; s < GrDrawState::kNumStages; ++s) {
-                GrAssert(sizeof(GrPoint) == stageOffsets[s]);
-                GrAssert(sizeof(GrPoint) == VertexStageCoordOffset(s, tcMask));
-            }
-        }
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////
-
-bool GrDrawState::StageUsesTexCoords(GrVertexLayout layout, int stageIdx) {
-    return SkToBool(layout & gStageTexCoordMasks[stageIdx]);
-}
-
-bool GrDrawState::srcAlphaWillBeOne(GrVertexLayout layout) const {
-
+bool GrDrawState::srcAlphaWillBeOne() const {
     uint32_t validComponentFlags;
-    GrColor  color;
+    GrColor color;
     // Check if per-vertex or constant color may have partial alpha
-    if (layout & kColor_VertexLayoutBit) {
+    if (this->hasColorVertexAttribute()) {
         validComponentFlags = 0;
+        color = 0; // not strictly necessary but we get false alarms from tools about uninit.
     } else {
-        validComponentFlags = GrEffect::kAll_ValidComponentFlags;
+        validComponentFlags = kRGBA_GrColorComponentFlags;
         color = this->getColor();
     }
 
     // Run through the color stages
-    int stageCnt = getFirstCoverageStage();
-    for (int s = 0; s < stageCnt; ++s) {
-        const GrEffectRef* effect = this->getStage(s).getEffect();
-        if (NULL != effect) {
-            (*effect)->getConstantColorComponents(&color, &validComponentFlags);
-        }
+    for (int s = 0; s < fColorStages.count(); ++s) {
+        const GrEffectRef* effect = fColorStages[s].getEffect();
+        (*effect)->getConstantColorComponents(&color, &validComponentFlags);
     }
 
     // Check if the color filter could introduce an alpha.
@@ -520,17 +238,15 @@ bool GrDrawState::srcAlphaWillBeOne(GrVertexLayout layout) const {
                 color |= (SkMulDiv255Round(a, b) << (c * 8));
             }
         }
-        for (int s = this->getFirstCoverageStage(); s < GrDrawState::kNumStages; ++s) {
-            const GrEffectRef* effect = this->getStage(s).getEffect();
-            if (NULL != effect) {
-                (*effect)->getConstantColorComponents(&color, &validComponentFlags);
-            }
+        for (int s = 0; s < fCoverageStages.count(); ++s) {
+            const GrEffectRef* effect = fCoverageStages[s].getEffect();
+            (*effect)->getConstantColorComponents(&color, &validComponentFlags);
         }
     }
-    return (GrEffect::kA_ValidComponentFlag & validComponentFlags) && 0xff == GrColorUnpackA(color);
+    return (kA_GrColorComponentFlag & validComponentFlags) && 0xff == GrColorUnpackA(color);
 }
 
-bool GrDrawState::hasSolidCoverage(GrVertexLayout layout) const {
+bool GrDrawState::hasSolidCoverage() const {
     // If we're drawing coverage directly then coverage is effectively treated as color.
     if (this->isCoverageDrawing()) {
         return true;
@@ -539,104 +255,230 @@ bool GrDrawState::hasSolidCoverage(GrVertexLayout layout) const {
     GrColor coverage;
     uint32_t validComponentFlags;
     // Initialize to an unknown starting coverage if per-vertex coverage is specified.
-    if (layout & kCoverage_VertexLayoutBit) {
+    if (this->hasCoverageVertexAttribute()) {
         validComponentFlags = 0;
     } else {
         coverage = fCommon.fCoverage;
-        validComponentFlags = GrEffect::kAll_ValidComponentFlags;
+        validComponentFlags = kRGBA_GrColorComponentFlags;
     }
 
     // Run through the coverage stages and see if the coverage will be all ones at the end.
-    for (int s = this->getFirstCoverageStage(); s < GrDrawState::kNumStages; ++s) {
-        const GrEffectRef* effect = this->getStage(s).getEffect();
-        if (NULL != effect) {
-            (*effect)->getConstantColorComponents(&coverage, &validComponentFlags);
+    for (int s = 0; s < fCoverageStages.count(); ++s) {
+        const GrEffectRef* effect = fCoverageStages[s].getEffect();
+        (*effect)->getConstantColorComponents(&coverage, &validComponentFlags);
+    }
+    return (kRGBA_GrColorComponentFlags == validComponentFlags) && (0xffffffff == coverage);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+// Some blend modes allow folding a fractional coverage value into the color's alpha channel, while
+// others will blend incorrectly.
+bool GrDrawState::canTweakAlphaForCoverage() const {
+    /*
+     The fractional coverage is f.
+     The src and dst coeffs are Cs and Cd.
+     The dst and src colors are S and D.
+     We want the blend to compute: f*Cs*S + (f*Cd + (1-f))D. By tweaking the source color's alpha
+     we're replacing S with S'=fS. It's obvious that that first term will always be ok. The second
+     term can be rearranged as [1-(1-Cd)f]D. By substituting in the various possibilities for Cd we
+     find that only 1, ISA, and ISC produce the correct destination when applied to S' and D.
+     Also, if we're directly rendering coverage (isCoverageDrawing) then coverage is treated as
+     color by definition.
+     */
+    return kOne_GrBlendCoeff == fCommon.fDstBlend ||
+           kISA_GrBlendCoeff == fCommon.fDstBlend ||
+           kISC_GrBlendCoeff == fCommon.fDstBlend ||
+           this->isCoverageDrawing();
+}
+
+GrDrawState::BlendOptFlags GrDrawState::getBlendOpts(bool forceCoverage,
+                                                     GrBlendCoeff* srcCoeff,
+                                                     GrBlendCoeff* dstCoeff) const {
+
+    GrBlendCoeff bogusSrcCoeff, bogusDstCoeff;
+    if (NULL == srcCoeff) {
+        srcCoeff = &bogusSrcCoeff;
+    }
+    *srcCoeff = this->getSrcBlendCoeff();
+
+    if (NULL == dstCoeff) {
+        dstCoeff = &bogusDstCoeff;
+    }
+    *dstCoeff = this->getDstBlendCoeff();
+
+    if (this->isColorWriteDisabled()) {
+        *srcCoeff = kZero_GrBlendCoeff;
+        *dstCoeff = kOne_GrBlendCoeff;
+    }
+
+    bool srcAIsOne = this->srcAlphaWillBeOne();
+    bool dstCoeffIsOne = kOne_GrBlendCoeff == *dstCoeff ||
+                         (kSA_GrBlendCoeff == *dstCoeff && srcAIsOne);
+    bool dstCoeffIsZero = kZero_GrBlendCoeff == *dstCoeff ||
+                         (kISA_GrBlendCoeff == *dstCoeff && srcAIsOne);
+
+    bool covIsZero = !this->isCoverageDrawing() &&
+                     !this->hasCoverageVertexAttribute() &&
+                     0 == this->getCoverage();
+    // When coeffs are (0,1) there is no reason to draw at all, unless
+    // stenciling is enabled. Having color writes disabled is effectively
+    // (0,1). The same applies when coverage is known to be 0.
+    if ((kZero_GrBlendCoeff == *srcCoeff && dstCoeffIsOne) || covIsZero) {
+        if (this->getStencil().doesWrite()) {
+            return kDisableBlend_BlendOptFlag |
+                   kEmitTransBlack_BlendOptFlag;
+        } else {
+            return kSkipDraw_BlendOptFlag;
         }
     }
-    return (GrEffect::kAll_ValidComponentFlags == validComponentFlags)  && (0xffffffff == coverage);
+
+    // check for coverage due to constant coverage, per-vertex coverage, or coverage stage
+    bool hasCoverage = forceCoverage ||
+                       0xffffffff != this->getCoverage() ||
+                       this->hasCoverageVertexAttribute() ||
+                       fCoverageStages.count() > 0;
+
+    // if we don't have coverage we can check whether the dst
+    // has to read at all. If not, we'll disable blending.
+    if (!hasCoverage) {
+        if (dstCoeffIsZero) {
+            if (kOne_GrBlendCoeff == *srcCoeff) {
+                // if there is no coverage and coeffs are (1,0) then we
+                // won't need to read the dst at all, it gets replaced by src
+                return kDisableBlend_BlendOptFlag;
+            } else if (kZero_GrBlendCoeff == *srcCoeff) {
+                // if the op is "clear" then we don't need to emit a color
+                // or blend, just write transparent black into the dst.
+                *srcCoeff = kOne_GrBlendCoeff;
+                *dstCoeff = kZero_GrBlendCoeff;
+                return kDisableBlend_BlendOptFlag | kEmitTransBlack_BlendOptFlag;
+            }
+        }
+    } else if (this->isCoverageDrawing()) {
+        // we have coverage but we aren't distinguishing it from alpha by request.
+        return kCoverageAsAlpha_BlendOptFlag;
+    } else {
+        // check whether coverage can be safely rolled into alpha
+        // of if we can skip color computation and just emit coverage
+        if (this->canTweakAlphaForCoverage()) {
+            return kCoverageAsAlpha_BlendOptFlag;
+        }
+        if (dstCoeffIsZero) {
+            if (kZero_GrBlendCoeff == *srcCoeff) {
+                // the source color is not included in the blend
+                // the dst coeff is effectively zero so blend works out to:
+                // (c)(0)D + (1-c)D = (1-c)D.
+                *dstCoeff = kISA_GrBlendCoeff;
+                return  kEmitCoverage_BlendOptFlag;
+            } else if (srcAIsOne) {
+                // the dst coeff is effectively zero so blend works out to:
+                // cS + (c)(0)D + (1-c)D = cS + (1-c)D.
+                // If Sa is 1 then we can replace Sa with c
+                // and set dst coeff to 1-Sa.
+                *dstCoeff = kISA_GrBlendCoeff;
+                return  kCoverageAsAlpha_BlendOptFlag;
+            }
+        } else if (dstCoeffIsOne) {
+            // the dst coeff is effectively one so blend works out to:
+            // cS + (c)(1)D + (1-c)D = cS + D.
+            *dstCoeff = kOne_GrBlendCoeff;
+            return  kCoverageAsAlpha_BlendOptFlag;
+        }
+    }
+    if (kOne_GrBlendCoeff == *srcCoeff &&
+        kZero_GrBlendCoeff == *dstCoeff &&
+        this->willEffectReadDstColor()) {
+        // In this case the shader will fully resolve the color, coverage, and dst and we don't
+        // need blending.
+        return kDisableBlend_BlendOptFlag;
+    }
+    return kNone_BlendOpt;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 void GrDrawState::AutoViewMatrixRestore::restore() {
     if (NULL != fDrawState) {
-        fDrawState->setViewMatrix(fViewMatrix);
-        for (int s = 0; s < GrDrawState::kNumStages; ++s) {
-            if (fRestoreMask & (1 << s)) {
-                fDrawState->fStages[s].restoreCoordChange(fSavedCoordChanges[s]);
-            }
+        GR_DEBUGCODE(--fDrawState->fBlockEffectRemovalCnt;)
+        fDrawState->fCommon.fViewMatrix = fViewMatrix;
+        GrAssert(fDrawState->numColorStages() >= fNumColorStages);
+        int numCoverageStages = fSavedCoordChanges.count() - fNumColorStages;
+        GrAssert(fDrawState->numCoverageStages() >= numCoverageStages);
+
+        int i = 0;
+        for (int s = 0; s < fNumColorStages; ++s, ++i) {
+            fDrawState->fColorStages[s].restoreCoordChange(fSavedCoordChanges[i]);
         }
+        for (int s = 0; s < numCoverageStages; ++s, ++i) {
+            fDrawState->fCoverageStages[s].restoreCoordChange(fSavedCoordChanges[i]);
+        }
+        fDrawState = NULL;
     }
-    fDrawState = NULL;
 }
 
 void GrDrawState::AutoViewMatrixRestore::set(GrDrawState* drawState,
-                                             const SkMatrix& preconcatMatrix,
-                                             uint32_t explicitCoordStageMask) {
+                                             const SkMatrix& preconcatMatrix) {
     this->restore();
 
-    fDrawState = drawState;
-    if (NULL == drawState) {
+    GrAssert(NULL == fDrawState);
+    if (NULL == drawState || preconcatMatrix.isIdentity()) {
         return;
     }
+    fDrawState = drawState;
 
-    fRestoreMask = 0;
     fViewMatrix = drawState->getViewMatrix();
-    drawState->preConcatViewMatrix(preconcatMatrix);
-    for (int s = 0; s < GrDrawState::kNumStages; ++s) {
-        if (!(explicitCoordStageMask & (1 << s)) && drawState->isStageEnabled(s)) {
-            fRestoreMask |= (1 << s);
-            fDrawState->fStages[s].saveCoordChange(&fSavedCoordChanges[s]);
-            drawState->fStages[s].preConcatCoordChange(preconcatMatrix);
-        }
-    }
+    drawState->fCommon.fViewMatrix.preConcat(preconcatMatrix);
+
+    this->doEffectCoordChanges(preconcatMatrix);
+    GR_DEBUGCODE(++fDrawState->fBlockEffectRemovalCnt;)
 }
 
-////////////////////////////////////////////////////////////////////////////////
-
-void GrDrawState::AutoDeviceCoordDraw::restore() {
-    if (NULL != fDrawState) {
-        fDrawState->setViewMatrix(fViewMatrix);
-        for (int s = 0; s < GrDrawState::kNumStages; ++s) {
-            if (fRestoreMask & (1 << s)) {
-                fDrawState->fStages[s].restoreCoordChange(fSavedCoordChanges[s]);
-            }
-        }
-    }
-    fDrawState = NULL;
-}
-
-bool GrDrawState::AutoDeviceCoordDraw::set(GrDrawState* drawState,
-                                           uint32_t explicitCoordStageMask) {
-    GrAssert(NULL != drawState);
-
+bool GrDrawState::AutoViewMatrixRestore::setIdentity(GrDrawState* drawState) {
     this->restore();
 
-    fDrawState = drawState;
-    if (NULL == fDrawState) {
+    if (NULL == drawState) {
         return false;
     }
 
-    fViewMatrix = drawState->getViewMatrix();
-    fRestoreMask = 0;
-    SkMatrix invVM;
-    bool inverted = false;
-
-    for (int s = 0; s < GrDrawState::kNumStages; ++s) {
-        if (!(explicitCoordStageMask & (1 << s)) && drawState->isStageEnabled(s)) {
-            if (!inverted && !fViewMatrix.invert(&invVM)) {
-                // sad trombone sound
-                fDrawState = NULL;
-                return false;
-            } else {
-                inverted = true;
-            }
-            fRestoreMask |= (1 << s);
-            GrEffectStage* stage = drawState->fStages + s;
-            stage->saveCoordChange(&fSavedCoordChanges[s]);
-            stage->preConcatCoordChange(invVM);
-        }
+    if (drawState->getViewMatrix().isIdentity()) {
+        return true;
     }
-    drawState->viewMatrix()->reset();
-    return true;
+
+    fViewMatrix = drawState->getViewMatrix();
+    if (0 == drawState->numTotalStages()) {
+        drawState->fCommon.fViewMatrix.reset();
+        fDrawState = drawState;
+        fNumColorStages = 0;
+        fSavedCoordChanges.reset(0);
+        GR_DEBUGCODE(++fDrawState->fBlockEffectRemovalCnt;)
+        return true;
+    } else {
+        SkMatrix inv;
+        if (!fViewMatrix.invert(&inv)) {
+            return false;
+        }
+        drawState->fCommon.fViewMatrix.reset();
+        fDrawState = drawState;
+        this->doEffectCoordChanges(inv);
+        GR_DEBUGCODE(++fDrawState->fBlockEffectRemovalCnt;)
+        return true;
+    }
+}
+
+void GrDrawState::AutoViewMatrixRestore::doEffectCoordChanges(const SkMatrix& coordChangeMatrix) {
+    fSavedCoordChanges.reset(fDrawState->numTotalStages());
+    int i = 0;
+
+    fNumColorStages = fDrawState->numColorStages();
+    for (int s = 0; s < fNumColorStages; ++s, ++i) {
+        fDrawState->fColorStages[s].saveCoordChange(&fSavedCoordChanges[i]);
+        fDrawState->fColorStages[s].localCoordChange(coordChangeMatrix);
+    }
+
+    int numCoverageStages = fDrawState->numCoverageStages();
+    for (int s = 0; s < numCoverageStages; ++s, ++i) {
+        fDrawState->fCoverageStages[s].saveCoordChange(&fSavedCoordChanges[i]);
+        fDrawState->fCoverageStages[s].localCoordChange(coordChangeMatrix);
+    }
 }

@@ -17,6 +17,7 @@
 #include "SkRect.h"
 #include "SkRefCnt.h"
 #include "SkStream.h"
+#include "SkTDArray.h"
 #include "SkTScopedPtr.h"
 
 class SkPDFArray;
@@ -27,12 +28,17 @@ class SkPDFFormXObject;
 class SkPDFGlyphSetMap;
 class SkPDFGraphicState;
 class SkPDFObject;
+class SkPDFResourceDict;
 class SkPDFShader;
 class SkPDFStream;
+template <typename T> class SkTSet;
 
 // Private classes.
 struct ContentEntry;
 struct GraphicStateEntry;
+struct NamedDestination;
+
+typedef bool (*EncodeToDCTStream)(SkWStream* stream, const SkBitmap& bitmap, const SkIRect& rect);
 
 /** \class SkPDFDevice
 
@@ -80,8 +86,10 @@ public:
     virtual void drawPath(const SkDraw&, const SkPath& origpath,
                           const SkPaint& paint, const SkMatrix* prePathMatrix,
                           bool pathIsMutable) SK_OVERRIDE;
+    virtual void drawBitmapRect(const SkDraw& draw, const SkBitmap& bitmap,
+                                const SkRect* src, const SkRect& dst,
+                                const SkPaint& paint) SK_OVERRIDE;
     virtual void drawBitmap(const SkDraw&, const SkBitmap& bitmap,
-                            const SkIRect* srcRectOrNull,
                             const SkMatrix& matrix, const SkPaint&) SK_OVERRIDE;
     virtual void drawSprite(const SkDraw&, const SkBitmap& bitmap, int x, int y,
                             const SkPaint& paint) SK_OVERRIDE;
@@ -120,24 +128,36 @@ public:
      */
     SK_API void setDrawingArea(DrawingArea drawingArea);
 
+    /** Sets the DCTEncoder for images.
+     *  @param encoder The encoder to encode a bitmap as JPEG (DCT).
+     *         Result of encodings are cached, if the encoder changes the
+     *         behaivor dynamically and an image is added to a second catalog,
+     *         we will likely use the result of the first encoding call.
+     *         By returning false from the encoder function, the encoder result
+     *         is not used.
+     *         Callers might not want to encode small images, as the time spent
+     *         encoding and decoding might not be worth the space savings,
+     *         if any at all.
+     */
+    void setDCTEncoder(EncodeToDCTStream encoder) {
+        fEncoder = encoder;
+    }
+
     // PDF specific methods.
 
     /** Returns the resource dictionary for this device.
      */
-    SK_API SkPDFDict* getResourceDict();
-
-    /** Get the list of resources (PDF objects) used on this page.
-     *  @param resourceList A list to append the resources to.
-     *  @param recursive    If recursive is true, get the resources of the
-     *                      device's resources recursively. (Useful for adding
-     *                      objects to the catalog.)
-     */
-    SK_API void getResources(SkTDArray<SkPDFObject*>* resourceList,
-                             bool recursive) const;
+    SK_API SkPDFResourceDict* getResourceDict();
 
     /** Get the fonts used on this device.
      */
     SK_API const SkTDArray<SkPDFFont*>& getFontResources() const;
+
+    /** Add our named destinations to the supplied dictionary.
+     *  @param dict  Dictionary to add destinations to.
+     *  @param page  The PDF object representing the page for this device.
+     */
+    void appendDestinations(SkPDFDict* dict, SkPDFObject* page);
 
     /** Returns a copy of the media box for this device. The caller is required
      *  to unref() this when it is finished.
@@ -187,7 +207,8 @@ private:
     SkClipStack fExistingClipStack;
     SkRegion fExistingClipRegion;
     SkPDFArray* fAnnotations;
-    SkPDFDict* fResourceDict;
+    SkPDFResourceDict* fResourceDict;
+    SkTDArray<NamedDestination*> fNamedDestinations;
 
     SkTDArray<SkPDFGraphicState*> fGraphicStateResources;
     SkTDArray<SkPDFObject*> fXObjectResources;
@@ -209,6 +230,8 @@ private:
 
     // Glyph ids used for each font on this device.
     SkTScopedPtr<SkPDFGlyphSetMap> fFontGlyphUsage;
+
+    EncodeToDCTStream fEncoder;
 
     SkPDFDevice(const SkISize& layerSize, const SkClipStack& existingClipStack,
                 const SkRegion& existingClipRegion);
@@ -270,8 +293,21 @@ private:
      */
     void copyContentEntriesToData(ContentEntry* entry, SkWStream* data) const;
 
-    bool handleAnnotations(const SkRect& r, const SkMatrix& matrix,
-                           const SkPaint& paint);
+#ifdef SK_PDF_USE_PATHOPS
+    bool handleInversePath(const SkDraw& d, const SkPath& origPath,
+                           const SkPaint& paint, bool pathIsMutable);
+#endif
+    bool handleRectAnnotation(const SkRect& r, const SkMatrix& matrix,
+                              const SkPaint& paint);
+    bool handlePointAnnotation(const SkPoint* points, size_t count,
+                               const SkMatrix& matrix, const SkPaint& paint);
+    SkPDFDict* createLinkAnnotation(const SkRect& r, const SkMatrix& matrix);
+    void handleLinkToURL(SkData* urlData, const SkRect& r,
+                         const SkMatrix& matrix);
+    void handleLinkToNamedDest(SkData* nameData, const SkRect& r,
+                               const SkMatrix& matrix);
+    void defineNamedDestination(SkData* nameData, const SkPoint& point,
+                                const SkMatrix& matrix);
 
     typedef SkDevice INHERITED;
 };
