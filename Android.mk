@@ -439,23 +439,10 @@ LOCAL_SRC_FILES += \
 	src/opts/SkBlitRow_opts_arm.cpp
 
 else
-ifeq ($(TARGET_ARCH_VARIANT),x86-atom)
-
-LOCAL_SRC_FILES += \
-    src/opts/SkBlitRow_opts_SSE2.cpp \
-    src/opts/SkBitmapProcState_opts_SSE2.cpp \
-    src/opts/SkBlitRect_opts_SSE2.cpp \
-    src/opts/SkBitmapProcState_opts_SSSE3.cpp \
-    src/opts/SkBitmapProcState_opts_SSE2_asm.S \
-    src/opts/opts_check_SSE2.cpp \
-    src/opts/SkUtils_opts_SSE2.cpp
-
-else
 LOCAL_SRC_FILES += \
 	src/opts/SkBlitRow_opts_none.cpp \
 	src/opts/SkBitmapProcState_opts_none.cpp \
 	src/opts/SkUtils_opts_none.cpp
-endif
 endif
 
 

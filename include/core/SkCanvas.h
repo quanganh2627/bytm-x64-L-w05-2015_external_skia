@@ -1007,14 +1007,12 @@ protected:
      reference count is incremented. If the canvas was already holding a
      device, its reference count is decremented. The new device is returned.
      */
-    //virtual SkDevice* setDevice(SkDevice* device);
+    virtual SkDevice* setDevice(SkDevice* device);
 
 #ifdef SK_BUILD_FOR_ANDROID
     friend class WebCore::GaneshRenderer;
     friend class WebCore::RasterRenderer;
 #endif
-public:
-    virtual SkDevice* setDevice(SkDevice* device);
 
 private:
     class MCRec;
