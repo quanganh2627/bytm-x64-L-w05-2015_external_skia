@@ -533,8 +533,6 @@ LOCAL_SRC_FILES += \
 else
 ifeq ($(TARGET_ARCH),x86)
 
-LOCAL_CFLAGS += -D__SSE2__
-
 LOCAL_SRC_FILES += \
     src/opts/SkBitmapFilter_opts_SSE2.cpp \
     src/opts/SkBlitRow_opts_SSE2.cpp \
