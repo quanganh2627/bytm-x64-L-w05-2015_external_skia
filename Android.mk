@@ -541,7 +541,8 @@ LOCAL_SRC_FILES += \
     src/opts/SkBlitRect_opts_SSE2.cpp \
     src/opts/opts_check_SSE2.cpp \
     src/opts/SkUtils_opts_SSE2.cpp \
-    src/opts/SkBitmapProcState_opts_SSSE3_asm.S
+    src/opts/SkBitmapProcState_opts_SSSE3_asm.S \
+    src/opts/SkBitmapProcState_opts_SSE2_asm.S
 
 else
 LOCAL_SRC_FILES += \
