@@ -351,6 +351,7 @@ LOCAL_SRC_FILES:= \
 	src/ports/SkTLS_pthread.cpp \
 	src/pdf/SkPDFCatalog.cpp \
 	src/pdf/SkPDFDevice.cpp \
+	src/pdf/SkPDFDeviceFlattener.cpp \
 	src/pdf/SkPDFDocument.cpp \
 	src/pdf/SkPDFFont.cpp \
 	src/pdf/SkPDFFormXObject.cpp \
@@ -530,10 +531,26 @@ LOCAL_SRC_FILES += \
 	src/opts/SkBlitRow_opts_arm.cpp
 
 else
+ifeq ($(TARGET_ARCH),x86)
+
+LOCAL_CFLAGS += -D__SSE2__
+
+LOCAL_SRC_FILES += \
+    src/opts/SkBitmapFilter_opts_SSE2.cpp \
+    src/opts/SkBlitRow_opts_SSE2.cpp \
+    src/opts/SkBitmapProcState_opts_SSE2.cpp \
+    src/opts/SkBitmapProcState_opts_SSSE3.cpp \
+    src/opts/SkBlitRect_opts_SSE2.cpp \
+    src/opts/opts_check_SSE2.cpp \
+    src/opts/SkUtils_opts_SSE2.cpp \
+    src/opts/SkBitmapProcState_opts_SSE2_asm.S
+
+else
 LOCAL_SRC_FILES += \
 	src/opts/SkBlitRow_opts_none.cpp \
 	src/opts/SkBitmapProcState_opts_none.cpp \
 	src/opts/SkUtils_opts_none.cpp
+endif
 endif
 
 LOCAL_SHARED_LIBRARIES := \
@@ -571,6 +588,7 @@ LOCAL_C_INCLUDES := \
 	$(LOCAL_PATH)/src/gpu \
 	$(LOCAL_PATH)/src/image \
 	$(LOCAL_PATH)/src/lazy \
+	$(LOCAL_PATH)/src/pdf \
 	$(LOCAL_PATH)/src/sfnt \
 	$(LOCAL_PATH)/src/utils \
 	external/freetype/include \

@@ -21,6 +21,11 @@
 #include <intrin.h>
 #endif
 
+#include "SkShader.h"
+extern void Repeate_S32_Opaque_D32_filter_DX_shaderproc_opt(
+                                       const SkBitmapProcState& s,
+                                       int x, int y, uint32_t* colors,
+                                       int count);
 /* This file must *not* be compiled with -msse or -msse2, otherwise
    gcc may generate sse2 even for scalar ops (and thus give an invalid
    instruction on Pentium3 on the code below).  Only files named *_SSE2.cpp
@@ -121,6 +126,15 @@ void SkBitmapProcState::platformProcs() {
     if (cachedHasSSSE3()) {
         if (fSampleProc32 == S32_opaque_D32_filter_DX) {
             fSampleProc32 = S32_opaque_D32_filter_DX_SSSE3;
+
+            bool repeatXY = SkShader::kRepeat_TileMode == fTileModeX &&
+                            SkShader::kRepeat_TileMode == fTileModeY;
+            const unsigned max = fBitmap->width() ;
+            // SSSE3 opted only if more than 4 pixels, dx=non-zero
+            if ((fInvSx > 0) && repeatXY && (max > 4) && ((fInvSx & 0xFFFF) != 0))
+            {
+                fShaderProc32 = Repeate_S32_Opaque_D32_filter_DX_shaderproc_opt;
+            }
         } else if (fSampleProc32 == S32_alpha_D32_filter_DX) {
             fSampleProc32 = S32_alpha_D32_filter_DX_SSSE3;
         }
@@ -135,6 +149,12 @@ void SkBitmapProcState::platformProcs() {
             fSampleProc32 = S32_opaque_D32_filter_DX_SSE2;
         } else if (fSampleProc32 == S32_alpha_D32_filter_DX) {
             fSampleProc32 = S32_alpha_D32_filter_DX_SSE2;
+        } else if (fSampleProc32 == S32_opaque_D32_nofilter_DX) {
+            fSampleProc32 = S32_opaque_D32_nofilter_DX_SSE2;
+        } else if (fSampleProc32 == S32_opaque_D32_filter_DXDY) {
+            fSampleProc32 = S32_opaque_D32_filter_DXDY_SSE2_asm;
+        } else if (fSampleProc32 == S32_alpha_D32_filter_DXDY) {
+            fSampleProc32 = S32_alpha_D32_filter_DXDY_SSE2_asm;
         }
 
         if (fSampleProc16 == S32_D16_filter_DX) {
@@ -169,8 +189,28 @@ static SkBlitRow::Proc32 platform_32_procs[] = {
     S32A_Blend_BlitRow32_SSE2,          // S32A_Blend,
 };
 
+static SkBlitRow::Proc platform_565_procs[] = {
+    // no dither
+    S32_D565_Opaque_SSE2,               // S32_D565_Opaque,
+    S32_D565_Blend_SSE2,                // S32_D565_Blend,
+
+    S32A_D565_Opaque_SSE2,              // S32A_D565_Opaque
+    S32A_D565_Blend_SSE2,               // S32A_D565_Blend
+
+    // dither
+    S32_D565_Opaque_Dither_SSE2,        // S32_D565_Opaque_Dither,
+    S32_D565_Blend_Dither_SSE2,         // S32_D565_Blend_Dither,
+
+    S32A_D565_Opaque_Dither_SSE2,       // S32A_D565_Opaque_Dither
+    NULL                                // S32A_D565_Blend_Dither
+};
+
 SkBlitRow::Proc SkBlitRow::PlatformProcs565(unsigned flags) {
-    return NULL;
+    if (hasSSE2()) {
+        return platform_565_procs[flags];
+    } else {
+        return NULL;
+    }
 }
 
 SkBlitRow::ColorProc SkBlitRow::PlatformColorProc() {
