@@ -14,5 +14,9 @@ extern "C" void S32A_Opaque_BlitRow32_SSE4_asm(SkPMColor* SK_RESTRICT dst,
                                                const SkPMColor* SK_RESTRICT src,
                                                int count, U8CPU alpha);
 
+extern "C" void S32A_Blend_BlitRow32_SSE4_asm(SkPMColor* SK_RESTRICT dst,
+                                              const SkPMColor* SK_RESTRICT src,
+                                              int count, U8CPU alpha);
+
 #endif
 

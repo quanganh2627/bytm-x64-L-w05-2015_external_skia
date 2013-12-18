@@ -238,11 +238,12 @@ static SkBlitRow::Proc32 platform_32_procs_SSE4[] = {
     S32_Blend_BlitRow32_SSE2,           // S32_Blend
 #if !defined(__x86_64__)
     S32A_Opaque_BlitRow32_SSE4_asm,     // S32A_Opaque (32-bit assembly version)
+    S32A_Blend_BlitRow32_SSE4_asm       // S32A_Blend (32-bit assembly version)
 #else
 #warning "Can't use SSE4 assembly optimizations in 64-bit mode. Using old intrinsic version."
     S32A_Opaque_BlitRow32_SSE2,         // S32A_Opaque (Intrinsics fallback version)
+    S32A_Blend_BlitRow32_SSE2           // S32A_Blend (Intrinsics fallback version)
 #endif
-    S32A_Blend_BlitRow32_SSE2           // S32A_Blend
 };
 
 SkBlitRow::Proc32 SkBlitRow::PlatformProcs32(unsigned flags) {
