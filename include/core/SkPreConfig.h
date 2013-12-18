@@ -131,10 +131,16 @@
 #define SK_CPU_SSE_LEVEL_SSE2     20
 #define SK_CPU_SSE_LEVEL_SSE3     30
 #define SK_CPU_SSE_LEVEL_SSSE3    31
+#define SK_CPU_SSE_LEVEL_SSE41    41
+#define SK_CPU_SSE_LEVEL_SSE42    42
 
 // Are we in GCC?
 #ifndef SK_CPU_SSE_LEVEL
-    #if defined(__SSSE3__)
+    #if defined(__SSE4_2__) || defined(__SSE4__)
+        #define SK_CPU_SSE_LEVEL    SK_CPU_SSE_LEVEL_SSE42
+    #elif defined(__SSE4_1__)
+        #define SK_CPU_SSE_LEVEL    SK_CPU_SSE_LEVEL_SSE41
+    #elif defined(__SSSE3__)
         #define SK_CPU_SSE_LEVEL    SK_CPU_SSE_LEVEL_SSSE3
     #elif defined(__SSE3__)
         #define SK_CPU_SSE_LEVEL    SK_CPU_SSE_LEVEL_SSE3
