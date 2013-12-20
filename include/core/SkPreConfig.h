@@ -134,12 +134,12 @@
 
 // Are we in GCC?
 #ifndef SK_CPU_SSE_LEVEL
-    #if defined(__SSE2__)
-        #define SK_CPU_SSE_LEVEL    SK_CPU_SSE_LEVEL_SSE2
+    #if defined(__SSSE3__)
+        #define SK_CPU_SSE_LEVEL    SK_CPU_SSE_LEVEL_SSSE3
     #elif defined(__SSE3__)
         #define SK_CPU_SSE_LEVEL    SK_CPU_SSE_LEVEL_SSE3
-    #elif defined(__SSSE3__)
-        #define SK_CPU_SSE_LEVEL    SK_CPU_SSE_LEVEL_SSSE3
+    #elif defined(__SSE2__)
+        #define SK_CPU_SSE_LEVEL    SK_CPU_SSE_LEVEL_SSE2
     #endif
 #endif
 

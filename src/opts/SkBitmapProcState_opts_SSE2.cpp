@@ -1071,7 +1071,12 @@ void S32_opaque_D32_filter_DXDY_SSE2_asm(const SkBitmapProcState& s,
         if (count >= 4)
         {
             __attribute__((aligned(16)))
-            __m128i tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7, tmp8, tmp9, tmpa;
+            __m128i tmp5, tmp6, tmp8, tmp9, tmpa;
+            tmp5 = _mm_setzero_si128();
+            tmp6 = _mm_setzero_si128();
+            tmp8 = _mm_setzero_si128();
+            tmp9 = _mm_setzero_si128();
+            tmpa = _mm_setzero_si128();
             // load 4 pixes in each run [D, C, B, A]
             __asm__(
             "1:\n"
@@ -1270,8 +1275,7 @@ void S32_opaque_D32_filter_DXDY_SSE2_asm(const SkBitmapProcState& s,
             :"+d" (xy)
             : [srcAddr] "m" (srcAddr), [colors] "m" (colors), [rb] "m" (rb),
             [count] "m" (count),
-            [tmp1] "m" (tmp1), [tmp2] "m" (tmp2), [tmp3] "m" (tmp3), [tmp4] "m" (tmp4),
-            [tmp5] "m" (tmp5), [tmp6] "m" (tmp6), [tmp7] "m" (tmp7), [tmp8] "m" (tmp4),
+            [tmp5] "m" (tmp5), [tmp6] "m" (tmp6), [tmp8] "m" (tmp8),
             [tmp9] "m" (tmp9), [tmpa] "m" (tmpa)
             :"memory","ecx","esi","edi", "eax"
         );
@@ -1304,6 +1308,7 @@ void S32_opaque_D32_filter_DXDY_SSE2_asm(const SkBitmapProcState& s,
         count --;
     }
 }
+
 void S32_alpha_D32_filter_DXDY_SSE2(const SkBitmapProcState& s,
                                   const uint32_t* xy,
                                   int count, uint32_t* colors) {
@@ -1598,8 +1603,14 @@ void S32_alpha_D32_filter_DXDY_SSE2_asm(const SkBitmapProcState& s,
         // BE CAREFUL, count >= 4
         if (count >= 4)
         {
-            __attribute__((aligned(16)))
-            __m128i tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7, tmp8, tmp9, tmpa, tmpb;
+           __attribute__((aligned(16)))
+           __m128i tmp5, tmp6, tmp8, tmp9, tmpa, tmpb;
+           tmp5 = _mm_setzero_si128();
+           tmp6 = _mm_setzero_si128();
+           tmp8 = _mm_setzero_si128();
+           tmp9 = _mm_setzero_si128();
+           tmpa = _mm_setzero_si128();
+           tmpb = _mm_setzero_si128();
            // unsigned int tmpeax;
             __asm__(
            // "mov   %%eax, %[tmpeax]\n"
@@ -1816,8 +1827,7 @@ void S32_alpha_D32_filter_DXDY_SSE2_asm(const SkBitmapProcState& s,
            :"+d" (xy)
            :[srcAddr] "m" (srcAddr), [colors] "m" (colors), [rb] "m" (rb),
            [count] "m" (count),[alphaScale] "m" (alphaScale),
-           [tmp1] "m" (tmp1), [tmp2] "m" (tmp2), [tmp3] "m" (tmp3), [tmp4] "m" (tmp4),
-           [tmp5] "m" (tmp5), [tmp6] "m" (tmp6), [tmp7] "m" (tmp7), [tmp8] "m" (tmp4),
+           [tmp5] "m" (tmp5), [tmp6] "m" (tmp6), [tmp8] "m" (tmp8),
            [tmp9] "m" (tmp9), [tmpa] "m" (tmpa), [tmpb] "m" (tmpb)
            :"memory","ecx","esi","edi", "eax"
            );
