@@ -569,7 +569,6 @@ LOCAL_SHARED_LIBRARIES := \
 	liblog \
 	libcutils \
 	libft2 \
-	libjpeg \
 	libpng \
 	libutils \
 	libz \
@@ -577,6 +576,14 @@ LOCAL_SHARED_LIBRARIES := \
 	libutils \
 	libEGL \
 	libGLESv2
+ifeq ($(USE_LIBJPEG_TURBO),true)
+LOCAL_SHARED_LIBRARIES += \
+	libjpeg-turbo
+else
+LOCAL_SHARED_LIBRARIES += \
+	libjpeg
+endif
+
 
 LOCAL_STATIC_LIBRARIES := \
 	libgif \
@@ -609,10 +616,17 @@ LOCAL_C_INCLUDES := \
 	external/zlib \
 	external/libpng \
 	external/giflib \
-	external/jpeg \
 	external/webp/include \
 	frameworks/base/opengl/include \
 	external/expat/lib
+
+ifeq ($(USE_LIBJPEG_TURBO),true)
+LOCAL_C_INCLUDES += \
+	$(TARGET_OUT_HEADERS)
+else
+LOCAL_C_INCLUDES += \
+	external/jpeg
+endif
 
 LOCAL_EXPORT_C_INCLUDE_DIRS := \
 	$(LOCAL_PATH)/include/config \
