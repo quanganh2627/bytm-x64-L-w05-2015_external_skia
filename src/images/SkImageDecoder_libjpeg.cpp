@@ -1172,6 +1172,12 @@ protected:
 #else
         cinfo.in_color_space = JCS_RGB;
 #endif
+#ifdef HAS_LIBJPEG_TURBO
+        if (bm.config() == SkBitmap::kARGB_8888_Config) {
+            cinfo.in_color_space = JCS_EXT_RGBA;
+            cinfo.input_components = 4;
+	}
+#endif
         cinfo.input_gamma = 1;
 
         jpeg_set_defaults(&cinfo);
@@ -1190,7 +1196,11 @@ protected:
 
         while (cinfo.next_scanline < cinfo.image_height) {
             JSAMPROW row_pointer[1];    /* pointer to JSAMPLE row[s] */
-
+#ifdef HAS_LIBJPEG_TURBO
+            if (bm.config() == SkBitmap::kARGB_8888_Config)
+                oneRowP = (uint8_t *)srcRow;
+            else
+#endif
             writer(oneRowP, srcRow, width, colors);
             row_pointer[0] = oneRowP;
             (void) jpeg_write_scanlines(&cinfo, row_pointer, 1);
