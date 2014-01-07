@@ -52,6 +52,10 @@ ifeq ($(ARCH_ARM_HAVE_NEON),true)
 	LOCAL_CFLAGS += -D__ARM_HAVE_NEON
 endif
 
+ifeq ($(USE_LIBJPEG_TURBO),true)
+	LOCAL_CFLAGS += -DHAS_LIBJPEG_TURBO
+endif
+
 LOCAL_CFLAGS += -DDCT_IFAST_SUPPORTED
 
 # using freetype's embolden allows us to adjust fake bold settings at
