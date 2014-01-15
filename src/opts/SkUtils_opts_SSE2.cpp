@@ -7,6 +7,27 @@
 
 #include <emmintrin.h>
 #include "SkUtils_opts_SSE2.h"
+#include "cutils/memory.h"
+
+void sk_memset16_libcutils(uint16_t *dst, uint16_t value, int count)
+{
+    SkASSERT(dst != NULL && count >= 0);
+
+    // dst must be 2-byte aligned.
+    SkASSERT((((size_t) dst) & 0x01) == 0);
+
+    android_memset16(dst, value, count << 1);
+}
+
+void sk_memset32_libcutils(uint32_t *dst, uint32_t value, int count)
+{
+    SkASSERT(dst != NULL && count >= 0);
+
+    // dst must be 4-byte aligned.
+    SkASSERT((((size_t) dst) & 0x03) == 0);
+
+    android_memset32(dst, value, count << 2);
+}
 
 void sk_memset16_SSE2(uint16_t *dst, uint16_t value, int count)
 {
