@@ -298,7 +298,7 @@ SkBlitMask::RowProc SkBlitMask::PlatformRowProcs(SkBitmap::Config dstConfig,
 
 SkMemset16Proc SkMemset16GetPlatformProc() {
     if (getSSELevel() >= SK_CPU_SSE_LEVEL_SSE2) {
-        return sk_memset16_SSE2;
+        return sk_memset16_libcutils;
     } else {
         return NULL;
     }
@@ -306,7 +306,7 @@ SkMemset16Proc SkMemset16GetPlatformProc() {
 
 SkMemset32Proc SkMemset32GetPlatformProc() {
     if (getSSELevel() >= SK_CPU_SSE_LEVEL_SSE2) {
-        return sk_memset32_SSE2;
+        return sk_memset32_libcutils;
     } else {
         return NULL;
     }
