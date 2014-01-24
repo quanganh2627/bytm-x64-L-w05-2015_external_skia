@@ -538,15 +538,15 @@ else
 ifeq ($(TARGET_ARCH),x86)
 
 LOCAL_SRC_FILES += \
+    src/opts/opts_check_x86.cpp \
     src/opts/SkBitmapFilter_opts_SSE2.cpp \
-    src/opts/SkBlitRow_opts_SSE2.cpp \
     src/opts/SkBitmapProcState_opts_SSE2.cpp \
+    src/opts/SkBitmapProcState_opts_SSE2_asm.S \
     src/opts/SkBitmapProcState_opts_SSSE3.cpp \
     src/opts/SkBlitRect_opts_SSE2.cpp \
-    src/opts/opts_check_SSE2.cpp \
-    src/opts/SkUtils_opts_SSE2.cpp \
-    src/opts/SkBitmapProcState_opts_SSE2_asm.S
-
+    src/opts/SkBlitRow_opts_SSE2.cpp \
+    src/opts/SkBlitRow_opts_SSE4_asm.S \
+    src/opts/SkUtils_opts_SSE2.cpp
 else
 LOCAL_SRC_FILES += \
 	src/opts/SkBlitRow_opts_none.cpp \

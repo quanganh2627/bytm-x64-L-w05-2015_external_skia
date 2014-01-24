@@ -147,7 +147,13 @@ void SkBitmapProcShader::endContext() {
     this->INHERITED::endContext();
 }
 
-#define BUF_MAX     128
+/* Defines the buffer size for sample pixel indexes, used in the sample proc
+ * function calls.
+ * If the operation is bigger than the buffer, it's split into multiple calls.
+ * A display with a width of 720 pixels requires a buffer size of at least 361,
+ * to run uninterrupted.
+ */
+#define BUF_MAX     384
 
 #define TEST_BUFFER_OVERRITEx
 

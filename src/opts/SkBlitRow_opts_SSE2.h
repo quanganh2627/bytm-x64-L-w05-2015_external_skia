@@ -7,6 +7,9 @@
  */
 
 
+#ifndef SkBlitRow_opts_SSE2_DEFINED
+#define SkBlitRow_opts_SSE2_DEFINED
+
 #include "SkBlitRow.h"
 
 void S32_Blend_BlitRow32_SSE2(SkPMColor* SK_RESTRICT dst,
@@ -48,3 +51,5 @@ void S32_D565_Opaque_Dither_SSE2(uint16_t* __restrict__ dst,
 
 void S32_D565_Blend_Dither_SSE2(uint16_t* __restrict__ dst,
         const SkPMColor* __restrict__ src, int count, U8CPU alpha, int x, int y);
+
+#endif
