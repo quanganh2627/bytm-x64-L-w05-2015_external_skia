@@ -27,7 +27,7 @@ LOCAL_PATH:= $(call my-dir)
 
 
 #############################################################
-#   build the skia+fretype+png+jpeg+zlib+gif+webp library
+#   build the skia+freetype+png+jpeg+zlib+gif+webp library
 #
 
 include $(CLEAR_VARS)
@@ -538,6 +538,26 @@ LOCAL_SRC_FILES += \
 	src/opts/SkXfermode_opts_arm.cpp
 
 else
+ifeq ($(TARGET_ARCH),x86)
+LOCAL_SRC_FILES += \
+	src/opts/opts_check_SSE2.cpp \
+	src/opts/SkBitmapProcState_opts_SSE2.cpp \
+	src/opts/SkBitmapFilter_opts_SSE2.cpp \
+	src/opts/SkBlitRow_opts_SSE2.cpp \
+	src/opts/SkBlitRect_opts_SSE2.cpp \
+	src/opts/SkUtils_opts_SSE2.cpp \
+	src/opts/SkBitmapProcState_opts_SSSE3.cpp
+else
+ifeq ($(TARGET_ARCH),x86_64)
+LOCAL_SRC_FILES += \
+	src/opts/opts_check_SSE2.cpp \
+	src/opts/SkBitmapProcState_opts_SSE2.cpp \
+	src/opts/SkBitmapFilter_opts_SSE2.cpp \
+	src/opts/SkBlitRow_opts_SSE2.cpp \
+	src/opts/SkBlitRect_opts_SSE2.cpp \
+	src/opts/SkUtils_opts_SSE2.cpp \
+	src/opts/SkBitmapProcState_opts_SSSE3.cpp
+else
 LOCAL_SRC_FILES += \
 	src/opts/SkBitmapProcState_opts_none.cpp \
 	src/opts/SkBlitMask_opts_none.cpp \
@@ -546,6 +566,8 @@ LOCAL_SRC_FILES += \
 	src/opts/SkMorphology_opts_none.cpp \
 	src/opts/SkUtils_opts_none.cpp \
 	src/opts/SkXfermode_opts_none.cpp
+endif
+endif
 endif
 
 LOCAL_SHARED_LIBRARIES := \
