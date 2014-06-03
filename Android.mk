@@ -546,7 +546,10 @@ LOCAL_SRC_FILES += \
 	src/opts/SkBlitRow_opts_SSE2.cpp \
 	src/opts/SkBlitRect_opts_SSE2.cpp \
 	src/opts/SkUtils_opts_SSE2.cpp \
-	src/opts/SkBitmapProcState_opts_SSSE3.cpp
+	src/opts/SkBitmapProcState_opts_SSSE3.cpp \
+	src/opts/SkXfermode_opts_none.cpp \
+	src/opts/SkMorphology_opts_SSE2.cpp \
+	src/opts/SkBlurImage_opts_SSE2.cpp
 else
 ifeq ($(TARGET_ARCH),x86_64)
 LOCAL_SRC_FILES += \
@@ -556,7 +559,10 @@ LOCAL_SRC_FILES += \
 	src/opts/SkBlitRow_opts_SSE2.cpp \
 	src/opts/SkBlitRect_opts_SSE2.cpp \
 	src/opts/SkUtils_opts_SSE2.cpp \
-	src/opts/SkBitmapProcState_opts_SSSE3.cpp
+	src/opts/SkBitmapProcState_opts_SSSE3.cpp \
+	src/opts/SkXfermode_opts_none.cpp \
+	src/opts/SkMorphology_opts_SSE2.cpp \
+	src/opts/SkBlurImage_opts_SSE2.cpp
 else
 LOCAL_SRC_FILES += \
 	src/opts/SkBitmapProcState_opts_none.cpp \
