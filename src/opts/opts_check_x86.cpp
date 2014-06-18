@@ -75,48 +75,38 @@ static inline void getcpuid(int info_type, int info[4]) {
 #endif
 #endif
 
-#if defined(__x86_64__) || defined(_WIN64) || SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSE2
-/* All x86_64 machines have SSE2, or we know it's supported at compile time,  so don't even bother checking. */
-static inline bool hasSSE2() {
-    return true;
+// If the code is built for an architecture that has SSE4+,
+// then we shouldn't have to check during run-time.
+#if SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSE42
+static inline int getSSELevel() {
+    return SK_CPU_SSE_LEVEL_SSE42;
 }
 #else
 
-static inline bool hasSSE2() {
+static int checkSSELevel() {
     int cpu_info[4] = { 0 };
+
     getcpuid(1, cpu_info);
-    return (cpu_info[3] & (1<<26)) != 0;
+    if ((cpu_info[2] & (1<<20)) != 0)
+        return SK_CPU_SSE_LEVEL_SSE42;
+    else if ((cpu_info[2] & (1<<9)) != 0)
+        return SK_CPU_SSE_LEVEL_SSSE3;
+    else if ((cpu_info[3] & (1<<26)) != 0)
+        return SK_CPU_SSE_LEVEL_SSE2;
+    else
+        return 0;
+}
+
+static inline int getSSELevel() {
+    static int gSSELevel = checkSSELevel();
+    return gSSELevel;
 }
 #endif
-
-#if SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSSE3
-/* If we know SSSE3 is supported at compile time, don't even bother checking. */
-static inline bool hasSSSE3() {
-    return true;
-}
-#else
-
-static inline bool hasSSSE3() {
-    int cpu_info[4] = { 0 };
-    getcpuid(1, cpu_info);
-    return (cpu_info[2] & 0x200) != 0;
-}
-#endif
-
-static bool cachedHasSSE2() {
-    static bool gHasSSE2 = hasSSE2();
-    return gHasSSE2;
-}
-
-static bool cachedHasSSSE3() {
-    static bool gHasSSSE3 = hasSSSE3();
-    return gHasSSSE3;
-}
 
 SK_CONF_DECLARE( bool, c_hqfilter_sse, "bitmap.filter.highQualitySSE", false, "Use SSE optimized version of high quality image filters");
 
 void SkBitmapProcState::platformConvolutionProcs(SkConvolutionProcs* procs) {
-    if (cachedHasSSE2()) {
+    if (getSSELevel() >= SK_CPU_SSE_LEVEL_SSE2) {
         procs->fExtraHorizontalReads = 3;
         procs->fConvolveVertically = &convolveVertically_SSE2;
         procs->fConvolve4RowsHorizontally = &convolve4RowsHorizontally_SSE2;
@@ -126,46 +116,63 @@ void SkBitmapProcState::platformConvolutionProcs(SkConvolutionProcs* procs) {
 }
 
 void SkBitmapProcState::platformProcs() {
-    if (cachedHasSSSE3()) {
-        if (fSampleProc32 == S32_opaque_D32_filter_DX) {
-            fSampleProc32 = S32_opaque_D32_filter_DX_SSSE3;
+    const int SSELevel = getSSELevel();
 
+    // Check fSampleProc32
+    if (fSampleProc32 == S32_opaque_D32_filter_DX) {
+        if (SSELevel >= SK_CPU_SSE_LEVEL_SSSE3) {
+            fSampleProc32 = S32_opaque_D32_filter_DX_SSSE3;
+#if !defined(__x86_64__)
             bool repeatXY = SkShader::kRepeat_TileMode == fTileModeX &&
                             SkShader::kRepeat_TileMode == fTileModeY;
-            const unsigned max = fBitmap->width() ;
+            const unsigned max = fBitmap->width();
             // SSSE3 opted only if more than 4 pixels, dx=non-zero
-            if ((fInvSx > 0) && repeatXY && (max > 4) && ((fInvSx & 0xFFFF) != 0))
-            {
-                fShaderProc32 = Repeate_S32_Opaque_D32_filter_DX_shaderproc_opt;
+            if ((fInvSx > 0) && repeatXY && (max > 4) && ((fInvSx & 0xFFFF) != 0)) {
+                fShaderProc32 = Repeate_S32_Opaque_D32_filter_DX_shaderproc_opt;    // Not 64-bit compatible
             }
-        } else if (fSampleProc32 == S32_alpha_D32_filter_DX) {
-            fSampleProc32 = S32_alpha_D32_filter_DX_SSSE3;
-        }
-
-        if (fSampleProc32 == S32_opaque_D32_filter_DXDY) {
-            fSampleProc32 = S32_opaque_D32_filter_DXDY_SSSE3;
-        } else if (fSampleProc32 == S32_alpha_D32_filter_DXDY) {
-            fSampleProc32 = S32_alpha_D32_filter_DXDY_SSSE3;
-        }
-    } else if (cachedHasSSE2()) {
-        if (fSampleProc32 == S32_opaque_D32_filter_DX) {
+#endif
+        } else if (SSELevel >= SK_CPU_SSE_LEVEL_SSE2) {
             fSampleProc32 = S32_opaque_D32_filter_DX_SSE2;
-        } else if (fSampleProc32 == S32_alpha_D32_filter_DX) {
-            fSampleProc32 = S32_alpha_D32_filter_DX_SSE2;
-        } else if (fSampleProc32 == S32_opaque_D32_nofilter_DX) {
-            fSampleProc32 = S32_opaque_D32_nofilter_DX_SSE2;
-        } else if (fSampleProc32 == S32_opaque_D32_filter_DXDY) {
-            fSampleProc32 = S32_opaque_D32_filter_DXDY_SSE2_asm;
-        } else if (fSampleProc32 == S32_alpha_D32_filter_DXDY) {
-            fSampleProc32 = S32_alpha_D32_filter_DXDY_SSE2_asm;
         }
-
-        if (fSampleProc16 == S32_D16_filter_DX) {
-            fSampleProc16 = S32_D16_filter_DX_SSE2;
+    } else if (fSampleProc32 == S32_opaque_D32_nofilter_DX) {
+#if !defined(__x86_64__)
+        if (SSELevel >= SK_CPU_SSE_LEVEL_SSE2) {
+            fSampleProc32 = S32_opaque_D32_nofilter_DX_SSE2;        // Not 64-bit compatible
+        }
+#endif
+    } else if (fSampleProc32 == S32_opaque_D32_filter_DXDY) {
+        if (SSELevel >= SK_CPU_SSE_LEVEL_SSSE3) {
+            fSampleProc32 = S32_opaque_D32_filter_DXDY_SSSE3;
+        } else if (SSELevel >= SK_CPU_SSE_LEVEL_SSE2) {
+#if !defined(__x86_64__)
+            fSampleProc32 = S32_opaque_D32_filter_DXDY_SSE2_asm;    // Not 64-bit compatible
+#else
+            fSampleProc32 = S32_opaque_D32_filter_DXDY_SSE2;
+#endif
+        }
+    } else if (fSampleProc32 == S32_alpha_D32_filter_DX) {
+        if (SSELevel >= SK_CPU_SSE_LEVEL_SSSE3) {
+            fSampleProc32 = S32_alpha_D32_filter_DX_SSSE3;
+        } else if (SSELevel >= SK_CPU_SSE_LEVEL_SSE2) {
+            fSampleProc32 = S32_alpha_D32_filter_DX_SSE2;
+        }
+    } else if (fSampleProc32 == S32_alpha_D32_filter_DXDY) {
+        if (SSELevel >= SK_CPU_SSE_LEVEL_SSSE3) {
+            fSampleProc32 = S32_alpha_D32_filter_DXDY_SSSE3;
+        } else if (SSELevel >= SK_CPU_SSE_LEVEL_SSE2) {
+#if !defined(__x86_64__)
+            fSampleProc32 = S32_alpha_D32_filter_DXDY_SSE2_asm;    // Not 64-bit compatible
+#else
+            fSampleProc32 = S32_alpha_D32_filter_DXDY_SSE2;
+#endif
         }
     }
 
-    if (cachedHasSSSE3() || cachedHasSSE2()) {
+    if (SSELevel >= SK_CPU_SSE_LEVEL_SSE2) {
+        if (fSampleProc16 == S32_D16_filter_DX) {
+            fSampleProc16 = S32_D16_filter_DX_SSE2;
+        }
+
         if (fMatrixProc == ClampX_ClampY_filter_scale) {
             fMatrixProc = ClampX_ClampY_filter_scale_SSE2;
         } else if (fMatrixProc == ClampX_ClampY_nofilter_scale) {
@@ -177,6 +184,7 @@ void SkBitmapProcState::platformProcs() {
         } else if (fMatrixProc == ClampX_ClampY_nofilter_affine) {
             fMatrixProc = ClampX_ClampY_nofilter_affine_SSE2;
         }
+
         if (c_hqfilter_sse) {
             if (fShaderProc32 == highQualityFilter32) {
                 fShaderProc32 = highQualityFilter_SSE2;
@@ -184,13 +192,6 @@ void SkBitmapProcState::platformProcs() {
         }
     }
 }
-
-static SkBlitRow::Proc32 platform_32_procs[] = {
-    NULL,                               // S32_Opaque,
-    S32_Blend_BlitRow32_SSE2,           // S32_Blend,
-    S32A_Opaque_BlitRow32_SSE2,         // S32A_Opaque
-    S32A_Blend_BlitRow32_SSE2,          // S32A_Blend,
-};
 
 static SkBlitRow::Proc platform_565_procs[] = {
     // no dither
@@ -209,7 +210,7 @@ static SkBlitRow::Proc platform_565_procs[] = {
 };
 
 SkBlitRow::Proc SkBlitRow::PlatformProcs565(unsigned flags) {
-    if (hasSSE2()) {
+    if (getSSELevel() >= SK_CPU_SSE_LEVEL_SSE2) {
         return platform_565_procs[flags];
     } else {
         return NULL;
@@ -217,16 +218,23 @@ SkBlitRow::Proc SkBlitRow::PlatformProcs565(unsigned flags) {
 }
 
 SkBlitRow::ColorProc SkBlitRow::PlatformColorProc() {
-    if (cachedHasSSE2()) {
+    if (getSSELevel() >= SK_CPU_SSE_LEVEL_SSE2) {
         return Color32_SSE2;
     } else {
         return NULL;
     }
 }
 
+static SkBlitRow::Proc32 platform_32_procs_SSE2[] = {
+    NULL,                               // S32_Opaque,
+    S32_Blend_BlitRow32_SSE2,           // S32_Blend,
+    S32A_Opaque_BlitRow32_SSE2,         // S32A_Opaque
+    S32A_Blend_BlitRow32_SSE2,          // S32A_Blend,
+};
+
 SkBlitRow::Proc32 SkBlitRow::PlatformProcs32(unsigned flags) {
-    if (cachedHasSSE2()) {
-        return platform_32_procs[flags];
+    if (getSSELevel() >= SK_CPU_SSE_LEVEL_SSE2) {
+        return platform_32_procs_SSE2[flags];
     } else {
         return NULL;
     }
@@ -241,7 +249,7 @@ SkBlitMask::ColorProc SkBlitMask::PlatformColorProcs(SkBitmap::Config dstConfig,
     }
 
     ColorProc proc = NULL;
-    if (cachedHasSSE2()) {
+    if (getSSELevel() >= SK_CPU_SSE_LEVEL_SSE2) {
         switch (dstConfig) {
             case SkBitmap::kARGB_8888_Config:
                 // The SSE2 version is not (yet) faster for black, so we check
@@ -258,7 +266,7 @@ SkBlitMask::ColorProc SkBlitMask::PlatformColorProcs(SkBitmap::Config dstConfig,
 }
 
 SkBlitMask::BlitLCD16RowProc SkBlitMask::PlatformBlitRowProcs16(bool isOpaque) {
-    if (cachedHasSSE2()) {
+    if (getSSELevel() >= SK_CPU_SSE_LEVEL_SSE2) {
         if (isOpaque) {
             return SkBlitLCD16OpaqueRow_SSE2;
         } else {
@@ -269,6 +277,7 @@ SkBlitMask::BlitLCD16RowProc SkBlitMask::PlatformBlitRowProcs16(bool isOpaque) {
     }
 
 }
+
 SkBlitMask::RowProc SkBlitMask::PlatformRowProcs(SkBitmap::Config dstConfig,
                                                  SkMask::Format maskFormat,
                                                  RowFlags flags) {
@@ -276,7 +285,7 @@ SkBlitMask::RowProc SkBlitMask::PlatformRowProcs(SkBitmap::Config dstConfig,
 }
 
 SkMemset16Proc SkMemset16GetPlatformProc() {
-    if (cachedHasSSE2()) {
+    if (getSSELevel() >= SK_CPU_SSE_LEVEL_SSE2) {
         return sk_memset16_SSE2;
     } else {
         return NULL;
@@ -284,7 +293,7 @@ SkMemset16Proc SkMemset16GetPlatformProc() {
 }
 
 SkMemset32Proc SkMemset32GetPlatformProc() {
-    if (cachedHasSSE2()) {
+    if (getSSELevel() >= SK_CPU_SSE_LEVEL_SSE2) {
         return sk_memset32_SSE2;
     } else {
         return NULL;
@@ -292,7 +301,7 @@ SkMemset32Proc SkMemset32GetPlatformProc() {
 }
 
 SkMorphologyProc SkMorphologyGetPlatformProc(SkMorphologyProcType type) {
-    if (!cachedHasSSE2()) {
+    if (!(getSSELevel() >= SK_CPU_SSE_LEVEL_SSE2)) {
         return NULL;
     }
     switch (type) {
@@ -316,7 +325,7 @@ bool SkBoxBlurGetPlatformProcs(SkBoxBlurProc* boxBlurX,
 #ifdef SK_DISABLE_BLUR_DIVISION_OPTIMIZATION
     return false;
 #else
-    if (!cachedHasSSE2()) {
+    if (!(getSSELevel() >= SK_CPU_SSE_LEVEL_SSE2)) {
         return false;
     }
     return SkBoxBlurGetPlatformProcs_SSE2(boxBlurX, boxBlurY, boxBlurXY, boxBlurYX);
@@ -326,7 +335,7 @@ bool SkBoxBlurGetPlatformProcs(SkBoxBlurProc* boxBlurX,
 SkBlitRow::ColorRectProc PlatformColorRectProcFactory(); // suppress warning
 
 SkBlitRow::ColorRectProc PlatformColorRectProcFactory() {
-    if (cachedHasSSE2()) {
+    if (getSSELevel() >= SK_CPU_SSE_LEVEL_SSE2) {
         return ColorRect32_SSE2;
     } else {
         return NULL;
