@@ -6,6 +6,8 @@
  * found in the LICENSE file.
  */
 
+#ifndef SkBitmapProcState_opts_SSE2_DEFINED
+#define SkBitmapProcState_opts_SSE2_DEFINED
 
 #include "SkBitmapProcState.h"
 
@@ -44,3 +46,5 @@ void ClampX_ClampY_nofilter_affine_SSE2(const SkBitmapProcState& s,
 void S32_D16_filter_DX_SSE2(const SkBitmapProcState& s,
                                   const uint32_t* xy,
                                   int count, uint16_t* colors);
+
+#endif
