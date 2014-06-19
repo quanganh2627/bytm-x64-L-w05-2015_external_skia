@@ -18,18 +18,13 @@
 #include "SkUtils.h"
 #include "SkMorphology_opts.h"
 #include "SkMorphology_opts_SSE2.h"
-
+#include "SkShader.h"
 #include "SkRTConf.h"
 
 #if defined(_MSC_VER) && defined(_WIN64)
 #include <intrin.h>
 #endif
 
-#include "SkShader.h"
-extern void Repeate_S32_Opaque_D32_filter_DX_shaderproc_opt(
-                                       const SkBitmapProcState& s,
-                                       int x, int y, uint32_t* colors,
-                                       int count);
 /* This file must *not* be compiled with -msse or -msse2, otherwise
    gcc may generate sse2 even for scalar ops (and thus give an invalid
    instruction on Pentium3 on the code below).  Only files named *_SSE2.cpp
@@ -129,7 +124,7 @@ void SkBitmapProcState::platformProcs() {
             const unsigned max = fBitmap->width();
             // SSSE3 opted only if more than 4 pixels, dx=non-zero
             if ((fInvSx > 0) && repeatXY && (max > 4) && ((fInvSx & 0xFFFF) != 0)) {
-                fShaderProc32 = Repeate_S32_Opaque_D32_filter_DX_shaderproc_opt;    // Not 64-bit compatible
+                fShaderProc32 = Repeat_S32_Opaque_D32_filter_DX_shaderproc_opt;    // Not 64-bit compatible
             }
 #endif
         } else if (SSELevel >= SK_CPU_SSE_LEVEL_SSE2) {

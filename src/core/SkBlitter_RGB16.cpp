@@ -24,7 +24,7 @@
     #define USE_BLACK_BLITTER
 #endif
 
-#ifdef USE_SSE2
+#if SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSE2
 #include <emmintrin.h>
 #endif
 
@@ -351,7 +351,7 @@ void SkRGB16_Opaque_Blitter::blitAntiH(int x, int y,
     }
 }
 
-#ifdef USE_SSE2
+#if SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSE2
 static unsigned int solid_pixels_masks[1024] = {
   0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xFFFF0000,
   0x00000000, 0x00000000, 0x00000000, 0x0000FFFF, 0x00000000, 0x00000000, 0x00000000, 0xFFFFFFFF,
@@ -486,7 +486,7 @@ static unsigned int solid_pixels_masks[1024] = {
 // _mm_maskmoveu_si128(_mcolor, _mtemp, (char*)dst);
 #define solid_8_pixels(mask, dst, color)    \
     do {                                     \
-        if (mask != 0)  {                         \
+        if (mask != 0) {                         \
             __m128i _mtemp  = _mm_load_si128((__m128i*)(solid_pixels_masks + (mask << 2))); \
             __m128i _mcolor = _mm_set1_epi16((short)color);      \
             __m128i _mvalue = _mm_loadu_si128((__m128i*)dst);    \
@@ -510,7 +510,7 @@ static unsigned int solid_pixels_masks[1024] = {
         if (mask & 0x02) dst[6] = color;    \
         if (mask & 0x01) dst[7] = color;    \
     } while (0)
-#endif // #ifdef USE_SSE2
+#endif // #if SK_CPU_SSE_LEVEL >= SK_CPU_SSE_LEVEL_SSE2
 
 #define SK_BLITBWMASK_NAME                  SkRGB16_BlitBW
 #define SK_BLITBWMASK_ARGS                  , uint16_t color
