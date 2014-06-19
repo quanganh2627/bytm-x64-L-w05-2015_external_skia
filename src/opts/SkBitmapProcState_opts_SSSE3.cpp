@@ -9,6 +9,24 @@
 #include "SkBitmapProcState_opts_SSSE3.h"
 #include "SkPaint.h"
 #include "SkUtils.h"
+#include "SkBitmapProcState_filter.h"
+extern "C" void S32_Opaque_D32_filter_line_SSSE3_asm(uint32_t* row0,
+                                  uint32_t* row1,
+                                  SkFixed fx, unsigned subY,
+                                  uint32_t* colors, SkFixed dx,
+                                  int count);
+#define COUNT_NUMS_OF_STAGE(start, end, det)\
+   do { \
+       num = ((end) - (start))/(det)+1;\
+       if (num < rest )        \
+       {                       \
+           runs = num;         \
+           rest = rest - num;  \
+       } else {                \
+           runs = rest;        \
+           rest = 0;           \
+       }                       \
+   } while (0)
 
 // adding anonymous namespace seemed to force gcc to inline directly the
 // instantiation, instead of creating the functions
@@ -723,77 +741,176 @@ void S32_alpha_D32_filter_DXDY_SSSE3(const SkBitmapProcState& s,
     S32_generic_D32_filter_DXDY_SSSE3<true>(s, xy, count, colors);
 
 }
+static void S32_Opaque_D32_filter_line(uint32_t* row0, uint32_t* row1,
+                                  SkFixed fx, unsigned subY,
+                                  uint32_t* colors, SkFixed dx,
+                                  int count) {
+   while (count--) {
+       unsigned subX = (((fx) >> 12) & 0xF);
+       unsigned x0 = (fx) >> 16;
+       Filter_32_opaque(subX, subY, row0[x0], row0[x0+1],
+                                  row1[x0], row1[x0+1], colors);
+       colors++;
+       fx += dx;
+   }
+}
+static SkFixed S32_Opaque_D32_filter_line_rewind(uint32_t* row0,
+                                           uint32_t* row1,
+                                           SkFixed fx, unsigned subY,
+                                           uint32_t* colors, SkFixed dx,
+                                           int count, SkFixed oneX,
+                                           int maxX) {
+   while (count--) {
+       unsigned subX = (((fx) >> 12) & 0xF);
+       int x0 = (fx) >> 16;
+       if (x0 < 0) x0 = x0 + maxX;
+       int x1 = (fx + oneX) >> 16;
+       if (x1 > maxX) x1 = x1 -maxX;
+       Filter_32_opaque(subX, subY, row0[x0], row0[x1],
+                                  row1[x0], row1[x1], colors);
+       colors++;
+       fx += dx;
+   }
+   return fx;
+}
+
 /*
  * sum  = a00(16-y)(16-x) + a10(y)(16-x)
  *      + a01(16-y)(x)    + a11(y)(x)
  *
  */
-extern void S32_Opaque_D32_filter_line_SSSE3(uint32_t* row0, uint32_t* row1,
+void S32_Opaque_D32_filter_line_SSSE3_portable(uint32_t* row0, uint32_t* row1,
                                      SkFixed fx, unsigned subY,
                                      uint32_t* colors, SkFixed dx, int count) {
-    unsigned  subX = (((fx) >> 12) & 0xF);
+   unsigned  subX = (((fx) >> 12) & 0xF);
 
-    unsigned x0 = ((fx) >> 16);
-    // ( 0,  0,  0,  0,  0,  0,  0, 16)
-    __m128i sixteen = _mm_cvtsi32_si128(16);
+   unsigned x0 = ((fx) >> 16);
+   // ( 0,  0,  0,  0,  0,  0,  0, 16)
+   __m128i sixteen = _mm_cvtsi32_si128(16);
 
-    // ( 0,  0,  0,  0, 16, 16, 16, 16)
-    sixteen = _mm_shufflelo_epi16(sixteen, 0);
+   // ( 0,  0,  0,  0, 16, 16, 16, 16)
+   sixteen = _mm_shufflelo_epi16(sixteen, 0);
 
-    __m128i allY = _mm_cvtsi32_si128((subY << 8) | (16 - subY));
+   __m128i allY = _mm_cvtsi32_si128((subY << 8) | (16 - subY));
 
-    // (y, 16-y, y, 16-y,y,16-y,y,16-y)
-    allY = _mm_shufflelo_epi16(allY, 0);
+   // (y, 16-y, y, 16-y,y,16-y,y,16-y)
+   allY = _mm_shufflelo_epi16(allY, 0);
 
-    // (y,16-y, y,16-y,y,16-y,y,16-y,y,16-y,y,16-y,y,16-y,y,16-y)
-    allY = _mm_shuffle_epi32(allY, 0);
+   // (y,16-y, y,16-y,y,16-y,y,16-y,y,16-y,y,16-y,y,16-y,y,16-y)
+   allY = _mm_shuffle_epi32(allY, 0);
 
-    // ( 0,  0,  0,  0,  0,  0,  0,  0)
-    __m128i zero = _mm_setzero_si128();
+   // ( 0,  0,  0,  0,  0,  0,  0,  0)
+   __m128i zero = _mm_setzero_si128();
 
-    __m128i allX = _mm_cvtsi32_si128(subX);
-        // (,,,,x,x,x,x)
-    allX = _mm_shufflelo_epi16(allX, 0);
-    // (,,,,16-x,16-x,16-x,16-x)
-    __m128i negX = _mm_sub_epi16(sixteen, allX);
-    // (x,x,x,x,16-x,16-x,16-x,16-x)
-    negX = _mm_unpacklo_epi64(negX, allX);
+   __m128i allX = _mm_cvtsi32_si128(subX);
+   // (,,,,x,x,x,x)
+   allX = _mm_shufflelo_epi16(allX, 0);
+   // (,,,,16-x,16-x,16-x,16-x)
+   __m128i negX = _mm_sub_epi16(sixteen, allX);
+   // (x,x,x,x,16-x,16-x,16-x,16-x)
+   negX = _mm_unpacklo_epi64(negX, allX);
 
-    do {
-        __m128i a00 = _mm_cvtsi32_si128(row0[x0]);
-        __m128i a01 = _mm_cvtsi32_si128(row0[x0+1]);
-        __m128i a10 = _mm_cvtsi32_si128(row1[x0]);
-        __m128i a11 = _mm_cvtsi32_si128(row1[x0+1]);
+   do {
+       __m128i a00 = _mm_cvtsi32_si128(row0[x0]);
+       __m128i a01 = _mm_cvtsi32_si128(row0[x0+1]);
+       __m128i a10 = _mm_cvtsi32_si128(row1[x0]);
+       __m128i a11 = _mm_cvtsi32_si128(row1[x0+1]);
 
-        // (0, 0, a10, a00)
-        __m128i a01a00 = _mm_unpacklo_epi32(a00, a01);
-        // (0, 0, a11, a10)
-        __m128i a11a10 = _mm_unpacklo_epi32(a10, a11);
+       // (0, 0, a10, a00)
+       __m128i a01a00 = _mm_unpacklo_epi32(a00, a01);
+       // (0, 0, a11, a10)
+       __m128i a11a10 = _mm_unpacklo_epi32(a10, a11);
 
-        // (....A10,A00,R10,R00,G10,G00,B10,B00)
-        a01a00= _mm_unpacklo_epi8(a01a00, a11a10);
-        // [..A00*(16-y)+ A10*y, R00*(16-y)+ R10*y, G00*(16-y)+ G10*y, B00*(16-y)+ B10*y]
-        __m128i sum = _mm_maddubs_epi16(a01a00, allY);
+       // (....A10,A00,R10,R00,G10,G00,B10,B00)
+       a01a00= _mm_unpacklo_epi8(a01a00, a11a10);
+       // [..A00*(16-y)+ A10*y, R00*(16-y)+ R10*y, G00*(16-y)+ G10*y, B00*(16-y)+ B10*y]
+       __m128i sum = _mm_maddubs_epi16(a01a00, allY);
 
-        // [...(G00*(16-y)+ G10*y)(16-x),(B00*(16-y)+ B10*y) * (16-x)]
-        sum = _mm_mullo_epi16(sum, negX);
-        // [...(G01*(16-y)+ G11*y)(x),(B01*(16-y)+ B11*y) * (x)]
-        __m128i shifted = _mm_shuffle_epi32(sum, 0xE);
-        sum = _mm_add_epi16(sum, shifted);
-        sum = _mm_srli_epi16(sum, 8);
-        // Pack lower 4 16 bit values of sum into lower 4 bytes.
-        sum = _mm_packus_epi16(sum, shifted);
-        *colors++ = _mm_cvtsi128_si32(sum);
+       // [...(G00*(16-y)+ G10*y)(16-x),(B00*(16-y)+ B10*y) * (16-x)]
+       sum = _mm_mullo_epi16(sum, negX);
+       // [...(G01*(16-y)+ G11*y)(x),(B01*(16-y)+ B11*y) * (x)]
+       __m128i shifted = _mm_shuffle_epi32(sum, 0xE);
+       sum = _mm_add_epi16(sum, shifted);
+       sum = _mm_srli_epi16(sum, 8);
+       // Pack lower 4 16 bit values of sum into lower 4 bytes.
+       sum = _mm_packus_epi16(sum, shifted);
+       *colors++ = _mm_cvtsi128_si32(sum);
 
-        fx+= dx;
-        x0 = ((fx) >> 16);
-        subX = (((fx) >> 12) & 0xF);
-        allX = _mm_cvtsi32_si128(subX);
-        // (,,,,x,x,x,x)
-        allX = _mm_shufflelo_epi16(allX, 0);
-        // (,,,,16-x,16-x,16-x,16-x)
-        negX = _mm_sub_epi16(sixteen, allX);
-        // (x,x,x,x,16-x,16-x,16-x,16-x)
-        negX = _mm_unpacklo_epi64(negX, allX);
-    } while (--count > 0);
+       fx+= dx;
+       x0 = ((fx) >> 16);
+       subX = (((fx) >> 12) & 0xF);
+       allX = _mm_cvtsi32_si128(subX);
+       // (,,,,x,x,x,x)
+       allX = _mm_shufflelo_epi16(allX, 0);
+       // (,,,,16-x,16-x,16-x,16-x)
+       negX = _mm_sub_epi16(sixteen, allX);
+       // (x,x,x,x,16-x,16-x,16-x,16-x)
+       negX = _mm_unpacklo_epi64(negX, allX);
+   } while (--count > 0);
+}
+
+void Repeat_S32_Opaque_D32_filter_DX_shaderproc_opt(const SkBitmapProcState& s,
+                                            int x, int y, uint32_t* colors,
+                                            int count) {
+   SkASSERT((s.fBitmap->width()) > 1);
+   SkASSERT(((s.fInvSx) > 0) && (s.fInvSx & 0xFFFF));
+   const unsigned maxX = s.fBitmap->width() - 1;
+   const SkFixed oneX = s.fFilterOneX;
+   const SkFixed dx = s.fInvSx;
+   SkFixed fx;
+   uint32_t* row0;
+   uint32_t* row1;
+   unsigned subY;
+   {
+       SkPoint pt;
+       s.fInvProc(s.fInvMatrix, ((float)(x)) + (0.5f),
+                  ((float)(y)) + (0.5f), &pt);
+       SkFixed fy = ((SkFixed)((pt.fY) * (1 << 16))) - (s.fFilterOneY >> 1);
+       const unsigned maxY = s.fBitmap->height() - 1;
+
+       subY =  ((((fy) & 0xFFFF) * ((maxY) + 1) >> 12) & 0xF);
+       int y0 = (((fy) & 0xFFFF) * ((maxY) + 1) >> 16);
+       int y1 = (((fy + s.fFilterOneY) & 0xFFFF) * ((maxY) + 1) >> 16);
+
+       const char* __restrict__ srcAddr = (const char*)s.fBitmap->getPixels();
+       unsigned rb = s.fBitmap->rowBytes();
+       row0 = (uint32_t*)(srcAddr + y0 * rb);
+       row1 = (uint32_t*)(srcAddr + y1 * rb);
+
+       fx = SkScalarToFixed(pt.fX) - (oneX >> 1);
+       SkFixed fmax = (maxX << 16);
+       SkFixed foneX = oneX *(maxX+1);
+       int num = 0;
+       int runs = 0;
+       int rest = count;
+       SkFixed ffx = (fx & 0xFFFF )* ( maxX+1 );
+       SkFixed fdx = (dx & 0xFFFF) * ( maxX+1 );
+       SkFixed ffx1 = ffx + foneX;
+       while (rest > 0)
+       {
+           //normal case;
+           if (ffx >= 0 && ffx1 < fmax)
+           {
+               COUNT_NUMS_OF_STAGE(ffx1, fmax, fdx);
+               S32_Opaque_D32_filter_line_SSSE3_asm(row0, row1, ffx, subY,
+                                               colors, fdx, runs);
+               ffx = ffx + fdx * runs;
+               colors = colors + runs;
+               ffx1 = ffx + foneX;
+           }
+           // rare case
+           if (rest > 0 && ffx < fmax && ffx1 >= fmax) {
+               COUNT_NUMS_OF_STAGE(ffx, fmax, fdx);
+               ffx = S32_Opaque_D32_filter_line_rewind(row0, row1, ffx, subY,
+                                               colors, fdx, runs, foneX, maxX);
+               colors = colors + runs;
+               ffx1 = ffx + foneX;
+           }
+           if (ffx >= fmax) {
+               // rewind ffx;
+               ffx = ffx - fmax;
+               ffx1 = ffx + foneX;
+           }
+       }
+   }
 }
