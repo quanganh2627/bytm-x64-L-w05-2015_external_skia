@@ -42,6 +42,8 @@ endif
 
 ifeq ($(TARGET_ARCH),x86)
 	LOCAL_CFLAGS += -DANDROID_LARGE_MEMORY_DEVICE
+    # Using Skia's own function, instead of math lib's, has proven to be faster.
+    LOCAL_CFLAGS += -DSK_SOFTWARE_FLOAT
 endif
 
 ifeq ($(ARCH_ARM_HAVE_NEON),true)
