@@ -18,5 +18,13 @@ SkMemset32Proc SkMemset32GetPlatformProc() {
 }
 
 SkMemcpy32Proc SkMemcpy32GetPlatformProc() {
+   return NULL;
+}
+
+SkSetPixels16Proc SkSetPixels16GetPlatformProc() {
+    return NULL;
+}
+
+SkSetPixels32Proc SkSetPixels32GetPlatformProc() {
     return NULL;
 }

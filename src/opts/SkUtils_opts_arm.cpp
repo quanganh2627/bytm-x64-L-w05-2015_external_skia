@@ -52,6 +52,26 @@ SkMemset32Proc SkMemset32GetPlatformProc() {
 #endif
 }
 
+void sk_set_pixels16_arm(uint32_t dst[], uint32_t value, int count, int totalCount)
+{
+    // Ignore totalCount since ARM doesn't support it yet.
+    sk_memset16(dst, value, count);
+}
+
+void sk_set_pixels32_arm(uint32_t dst[], uint32_t value, int count, int totalCount)
+{
+    // Ignore totalCount since ARM doesn't support it yet.
+    sk_memset32(dst, value, count);
+}
+
+SkSetPixels16Proc SkSetPixels16GetPlatformProc() {
+    return sk_set_pixels16_arm;
+}
+
+SkSetPixels32Proc SkSetPixels32GetPlatformProc() {
+    return sk_set_pixels32_arm;
+}
+
 SkMemcpy32Proc SkMemcpy32GetPlatformProc() {
     return NULL;
 }

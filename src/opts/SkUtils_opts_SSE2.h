@@ -10,10 +10,10 @@
 
 #include "SkTypes.h"
 
-void sk_memset16_libcutils(uint16_t *dst, uint16_t value, int count);
-void sk_memset32_libcutils(uint32_t *dst, uint32_t value, int count);
-void sk_memset16_SSE2(uint16_t *dst, uint16_t value, int count);
-void sk_memset32_SSE2(uint32_t *dst, uint32_t value, int count);
 void sk_memcpy32_SSE2(uint32_t *dst, const uint32_t *src, int count);
+void SkMemset16_x86(uint16_t *dst, uint16_t value, int count);
+void SkMemset32_x86(uint32_t *dst, uint32_t value, int count);
+void SkSetPixels16_x86(uint16_t *dst, uint16_t value, int count, int totalCount);
+void SkSetPixels32_x86(uint32_t *dst, uint32_t value, int count, int totalCount);
 
 #endif

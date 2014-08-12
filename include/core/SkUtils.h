@@ -41,6 +41,40 @@ SkMemcpy32Proc SkMemcpy32GetPlatformProc();
 
 ///////////////////////////////////////////////////////////////////////////////
 
+/** Similar to memset(), but it assigns a 16bit value into the buffer.
+    @param buffer     The memory to have value copied into it
+    @param value      The 16bit value to be copied into buffer
+    @param count      The number of times value should be copied into the buffer.
+    @param totalCount The total number of times value will be copied into the buffer.
+                      This is used to indicate the total size of all the operations
+                      called in a loop.
+*/
+void sk_set_pixels16_portable(uint16_t dst[], uint16_t value, int count, int totalCount);
+typedef void (*SkSetPixels16Proc)(uint16_t dst[], uint16_t value, int count, int totalCount);
+SkSetPixels16Proc SkSetPixels16GetPlatformProc();
+
+/** Similar to memset(), but it assigns a 32bit value into the buffer.
+    @param buffer     The memory to have value copied into it
+    @param value      The 32bit value to be copied into buffer
+    @param count      The number of times value should be copied into the buffer.
+    @param totalCount The total number of times value will be copied into the buffer.
+                      This is used to indicate the total size of all the operations
+                      called in a loop.
+*/
+void sk_set_pixels32_portable(uint32_t dst[], uint32_t value, int count, int totalCount);
+typedef void (*SkSetPixels32Proc)(uint32_t dst[], uint32_t value, int count, int totalCount);
+SkSetPixels32Proc SkSetPixels32GetPlatformProc();
+
+#ifndef SkSetPixels16
+extern SkSetPixels16Proc SkSetPixels16;
+#endif
+
+#ifndef SkSetPixels32
+extern SkSetPixels32Proc SkSetPixels32;
+#endif
+
+///////////////////////////////////////////////////////////////////////////////
+
 #define kMaxBytesInUTF8Sequence     4
 
 #ifdef SK_DEBUG

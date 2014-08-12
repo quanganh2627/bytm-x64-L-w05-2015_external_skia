@@ -151,6 +151,32 @@ void sk_memcpy32(uint32_t dst[], const uint32_t src[], int count) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+void sk_set_pixels16_portable(uint16_t dst[], uint16_t value, int count, int) {
+    sk_memset16_portable(dst, value, count);
+}
+
+void sk_set_pixels32_portable(uint32_t dst[], uint32_t value, int count, int) {
+    sk_memset32_portable(dst, value, count);
+}
+
+static void sk_set_pixels16_stub(uint16_t dst[], uint16_t value, int count, int totalCount) {
+    SkSetPixels16Proc proc = SkSetPixels16GetPlatformProc();
+    SkSetPixels16 = proc ? proc : sk_set_pixels16_portable;
+    SkSetPixels16(dst, value, count, totalCount);
+}
+
+SkSetPixels16Proc SkSetPixels16 = sk_set_pixels16_stub;
+
+static void sk_set_pixels32_stub(uint32_t dst[], uint32_t value, int count, int totalCount) {
+    SkSetPixels32Proc proc = SkSetPixels32GetPlatformProc();
+    SkSetPixels32 = proc ? proc : sk_set_pixels32_portable;
+    SkSetPixels32(dst, value, count, totalCount);
+}
+
+SkSetPixels32Proc SkSetPixels32 = sk_set_pixels32_stub;
+
+///////////////////////////////////////////////////////////////////////////////
+
 /*  0xxxxxxx    1 total
     10xxxxxx    // never a leading byte
     110xxxxx    2 total

@@ -290,7 +290,7 @@ SkBlitMask::RowProc SkBlitMask::PlatformRowProcs(SkColorType, SkMask::Format, Ro
 
 SkMemset16Proc SkMemset16GetPlatformProc() {
     if (supports_simd(SK_CPU_SSE_LEVEL_SSE2)) {
-        return sk_memset16_libcutils;
+        return SkMemset16_x86;
     } else {
         return NULL;
     }
@@ -298,10 +298,18 @@ SkMemset16Proc SkMemset16GetPlatformProc() {
 
 SkMemset32Proc SkMemset32GetPlatformProc() {
     if (supports_simd(SK_CPU_SSE_LEVEL_SSE2)) {
-        return sk_memset32_libcutils;
+        return SkMemset32_x86;
     } else {
         return NULL;
     }
+}
+
+SkSetPixels16Proc SkSetPixels16GetPlatformProc() {
+    return SkSetPixels16_x86;
+}
+
+SkSetPixels32Proc SkSetPixels32GetPlatformProc() {
+    return SkSetPixels32_x86;
 }
 
 SkMemcpy32Proc SkMemcpy32GetPlatformProc() {

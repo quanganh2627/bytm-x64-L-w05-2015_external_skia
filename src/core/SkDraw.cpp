@@ -131,23 +131,23 @@ bool SkDraw::computeConservativeLocalClipBounds(SkRect* localBounds) const {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-typedef void (*BitmapXferProc)(void* pixels, size_t bytes, uint32_t data);
+typedef void (*BitmapXferProc)(void* pixels, size_t bytes, uint32_t data, size_t totalBytes);
 
-static void D_Clear_BitmapXferProc(void* pixels, size_t bytes, uint32_t) {
+static void D_Clear_BitmapXferProc(void* pixels, size_t bytes, uint32_t, size_t) {
     sk_bzero(pixels, bytes);
 }
 
-static void D_Dst_BitmapXferProc(void*, size_t, uint32_t data) {}
+static void D_Dst_BitmapXferProc(void*, size_t, uint32_t, size_t) {}
 
-static void D32_Src_BitmapXferProc(void* pixels, size_t bytes, uint32_t data) {
-    sk_memset32((uint32_t*)pixels, data, SkToInt(bytes >> 2));
+static void D32_Src_BitmapXferProc(void* pixels, size_t bytes, uint32_t data, size_t totalBytes) {
+    SkSetPixels32((uint32_t*)pixels, data, bytes >> 2, totalBytes >> 2);
 }
 
-static void D16_Src_BitmapXferProc(void* pixels, size_t bytes, uint32_t data) {
-    sk_memset16((uint16_t*)pixels, data, SkToInt(bytes >> 1));
+static void D16_Src_BitmapXferProc(void* pixels, size_t bytes, uint32_t data, size_t totalBytes) {
+    SkSetPixels16((uint16_t*)pixels, data, bytes >> 1, totalBytes >> 1);
 }
 
-static void DA8_Src_BitmapXferProc(void* pixels, size_t bytes, uint32_t data) {
+static void DA8_Src_BitmapXferProc(void* pixels, size_t bytes, uint32_t data, size_t) {
     memset(pixels, data, bytes);
 }
 
@@ -241,14 +241,15 @@ static void CallBitmapXferProc(const SkBitmap& bitmap, const SkIRect& rect,
     SkASSERT(pixels);
     const size_t rowBytes = bitmap.rowBytes();
     const int widthBytes = rect.width() << shiftPerPixel;
+    const int totalBytes = widthBytes * rect.height();
 
     // skip down to the first scanline and X position mupp
     pixels += rect.fTop * rowBytes + (rect.fLeft << shiftPerPixel);
     if ((rect.left() == 0) && (rowBytes == (size_t) widthBytes)) {
-        proc(pixels, widthBytes * rect.height(), procData);
+        proc(pixels, totalBytes, procData, totalBytes);
     } else {
         for (int scans = rect.height() - 1; scans >= 0; --scans) {
-            proc(pixels, widthBytes, procData);
+            proc(pixels, widthBytes, procData, totalBytes);
             pixels += rowBytes;
         }
     }
