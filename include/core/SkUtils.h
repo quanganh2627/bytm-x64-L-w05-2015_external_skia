@@ -41,36 +41,70 @@ SkMemcpy32Proc SkMemcpy32GetPlatformProc();
 
 ///////////////////////////////////////////////////////////////////////////////
 
-/** Similar to memset(), but it assigns a 16bit value into the buffer.
-    @param buffer     The memory to have value copied into it
-    @param value      The 16bit value to be copied into buffer
-    @param count      The number of times value should be copied into the buffer.
-    @param totalCount The total number of times value will be copied into the buffer.
+/** Similar to memset(), but it assigns a 16bit color into the buffer.
+    @param buffer     The memory to have the color copied into it
+    @param color      The 16bit color value to be copied into buffer
+    @param count      The number of times the color should be copied into the buffer.
+    @param totalCount The total number of times the color will be copied into the buffer.
                       This is used to indicate the total size of all the operations
                       called in a loop.
 */
-void sk_set_pixels16_portable(uint16_t dst[], uint16_t value, int count, int totalCount);
-typedef void (*SkSetPixels16Proc)(uint16_t dst[], uint16_t value, int count, int totalCount);
-SkSetPixels16Proc SkSetPixels16GetPlatformProc();
+void sk_set_pixel_row16_portable(uint16_t dst[], uint16_t color, int count, int totalCount);
+typedef void (*SkSetPixelRow16Proc)(uint16_t dst[], uint16_t color, int count, int totalCount);
+SkSetPixelRow16Proc SkSetPixelRow16GetPlatformProc();
 
-/** Similar to memset(), but it assigns a 32bit value into the buffer.
-    @param buffer     The memory to have value copied into it
-    @param value      The 32bit value to be copied into buffer
-    @param count      The number of times value should be copied into the buffer.
-    @param totalCount The total number of times value will be copied into the buffer.
+/** Similar to memset(), but it assigns a 32bit color into the buffer.
+    @param buffer     The memory to have the color copied into it
+    @param color      The 32bit color value to be copied into buffer
+    @param count      The number of times the color should be copied into the buffer.
+    @param totalCount The total number of times the color will be copied into the buffer.
                       This is used to indicate the total size of all the operations
                       called in a loop.
 */
-void sk_set_pixels32_portable(uint32_t dst[], uint32_t value, int count, int totalCount);
-typedef void (*SkSetPixels32Proc)(uint32_t dst[], uint32_t value, int count, int totalCount);
-SkSetPixels32Proc SkSetPixels32GetPlatformProc();
+void sk_set_pixel_row32_portable(uint32_t dst[], uint32_t color, int count, int totalCount);
+typedef void (*SkSetPixelRow32Proc)(uint32_t dst[], uint32_t color, int count, int totalCount);
+SkSetPixelRow32Proc SkSetPixelRow32GetPlatformProc();
 
-#ifndef SkSetPixels16
-extern SkSetPixels16Proc SkSetPixels16;
+#ifndef SkSetPixelRow16
+extern SkSetPixelRow16Proc SkSetPixelRow16;
 #endif
 
-#ifndef SkSetPixels32
-extern SkSetPixels32Proc SkSetPixels32;
+#ifndef SkSetPixelRow32
+extern SkSetPixelRow32Proc SkSetPixelRow32;
+#endif
+
+///////////////////////////////////////////////////////////////////////////////
+
+/** An extension of SetPixelRow16(), that sets a rectangular area instead.
+    @param buffer   The memory to have the color copied into it
+    @param color    The 16bit color value to be copied into buffer
+    @param width    The width of the rectangle, in pixels.
+    @param height   The height of the rectangle, in pixels.
+    @param rowBytes The width of one row in the buffer, in bytes. This is the
+                    value that will be added to 'buffer' to get to the next row.
+*/
+void sk_set_pixel_rect16_portable(uint16_t dst[], uint16_t color, int width, int height, int rowBytes);
+typedef void (*SkSetPixelRect16Proc)(uint16_t dst[], uint16_t color, int width, int height, int rowBytes);
+SkSetPixelRect16Proc SkSetPixelRect16GetPlatformProc();
+
+/** An extension of SetPixelRow32(), that sets a rectangular area instead.
+    @param buffer   The memory to have the color copied into it
+    @param color    The 16bit color value to be copied into buffer
+    @param width    The width of the rectangle, in pixels.
+    @param height   The height of the rectangle, in pixels.
+    @param rowBytes The width of one row in the buffer, in bytes. This is the
+                    value that will be added to 'buffer' to get to the next row.
+*/
+void sk_set_pixel_rect32_portable(uint32_t dst[], uint32_t color, int width, int height, int rowBytes);
+typedef void (*SkSetPixelRect32Proc)(uint32_t dst[], uint32_t color, int width, int height, int rowBytes);
+SkSetPixelRect32Proc SkSetPixelRect32GetPlatformProc();
+
+#ifndef SkSetPixelRect16
+extern SkSetPixelRect16Proc SkSetPixelRect16;
+#endif
+
+#ifndef SkSetPixelRect32
+extern SkSetPixelRect32Proc SkSetPixelRect32;
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////

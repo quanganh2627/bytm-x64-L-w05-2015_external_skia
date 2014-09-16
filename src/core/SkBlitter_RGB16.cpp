@@ -503,10 +503,7 @@ void SkRGB16_Opaque_Blitter::blitRect(int x, int y, int width, int height) {
             device = (uint16_t*)((char*)device + deviceRB);
         }
     } else {  // no dither
-        while (--height >= 0) {
-            sk_memset16(device, color16, width);
-            device = (uint16_t*)((char*)device + deviceRB);
-        }
+        SkSetPixelRect16(device, color16, width, height, deviceRB);
     }
 }
 

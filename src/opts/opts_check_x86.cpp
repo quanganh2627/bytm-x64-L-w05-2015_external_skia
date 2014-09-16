@@ -304,12 +304,20 @@ SkMemset32Proc SkMemset32GetPlatformProc() {
     }
 }
 
-SkSetPixels16Proc SkSetPixels16GetPlatformProc() {
-    return SkSetPixels16_x86;
+SkSetPixelRow16Proc SkSetPixelRow16GetPlatformProc() {
+    return SkSetPixelRow16_x86;
 }
 
-SkSetPixels32Proc SkSetPixels32GetPlatformProc() {
-    return SkSetPixels32_x86;
+SkSetPixelRow32Proc SkSetPixelRow32GetPlatformProc() {
+    return SkSetPixelRow32_x86;
+}
+
+SkSetPixelRect16Proc SkSetPixelRect16GetPlatformProc() {
+    return SkSetPixelRect16_x86;
+}
+
+SkSetPixelRect32Proc SkSetPixelRect32GetPlatformProc() {
+    return SkSetPixelRect32_x86;
 }
 
 SkMemcpy32Proc SkMemcpy32GetPlatformProc() {

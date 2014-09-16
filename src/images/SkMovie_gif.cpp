@@ -212,10 +212,7 @@ static void fillRect(SkBitmap* bm, GifWord left, GifWord top, GifWord width, Gif
         copyHeight = bmHeight - top;
     }
 
-    for (; copyHeight > 0; copyHeight--) {
-        sk_memset32(dst, col, copyWidth);
-        dst += bmWidth;
-    }
+    SkSetPixelRect32(dst, col, copyWidth, copyHeight, bmWidth * sizeof(uint32_t));
 }
 
 static void drawFrame(SkBitmap* bm, const SavedImage* frame, const ColorMapObject* cmap)

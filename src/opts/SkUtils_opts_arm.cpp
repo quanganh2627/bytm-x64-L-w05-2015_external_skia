@@ -52,24 +52,44 @@ SkMemset32Proc SkMemset32GetPlatformProc() {
 #endif
 }
 
-void sk_set_pixels16_arm(uint32_t dst[], uint32_t value, int count, int totalCount)
-{
+void sk_set_pixel_row16_arm(uint32_t dst[], uint32_t color, int count, int totalCount) {
     // Ignore totalCount since ARM doesn't support it yet.
-    sk_memset16(dst, value, count);
+    sk_memset16(dst, color, count);
 }
 
-void sk_set_pixels32_arm(uint32_t dst[], uint32_t value, int count, int totalCount)
-{
+void sk_set_pixel_row32_arm(uint32_t dst[], uint32_t color, int count, int totalCount) {
     // Ignore totalCount since ARM doesn't support it yet.
-    sk_memset32(dst, value, count);
+    sk_memset32(dst, color, count);
 }
 
-SkSetPixels16Proc SkSetPixels16GetPlatformProc() {
-    return sk_set_pixels16_arm;
+SkSetPixelRow16Proc SkSetPixelRow16GetPlatformProc() {
+    return sk_set_pixel_row16_arm;
 }
 
-SkSetPixels32Proc SkSetPixels32GetPlatformProc() {
-    return sk_set_pixels32_arm;
+SkSetPixelRow32Proc SkSetPixelRow32GetPlatformProc() {
+    return sk_set_pixel_row32_arm;
+}
+
+void sk_set_pixel_rect16_arm(uint16_t dst[], uint32_t color, int width, int height, int rowBytes) {
+    while (--height >= 0) {
+        sk_memset16(dst, color, width);
+        dst = (uint16_t*)((char*)dst + rowBytes);
+    }
+}
+
+void sk_set_pixel_rect32_arm(uint32_t dst[], uint32_t color, int width, int height, int rowBytes) {
+    while (--height >= 0) {
+        sk_memset32(dst, color, width);
+        dst = (uint32_t*)((char*)dst + rowBytes);
+    }
+}
+
+SkSetPixelRect16Proc SkSetPixelRect16GetPlatformProc() {
+    return sk_set_pixel_rect16_arm;
+}
+
+SkSetPixelRect32Proc SkSetPixelRect32GetPlatformProc() {
+    return sk_set_pixel_rect32_arm;
 }
 
 SkMemcpy32Proc SkMemcpy32GetPlatformProc() {

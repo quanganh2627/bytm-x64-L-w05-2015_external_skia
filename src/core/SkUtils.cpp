@@ -151,29 +151,61 @@ void sk_memcpy32(uint32_t dst[], const uint32_t src[], int count) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-void sk_set_pixels16_portable(uint16_t dst[], uint16_t value, int count, int) {
-    sk_memset16_portable(dst, value, count);
+void sk_set_pixel_row16_portable(uint16_t dst[], uint16_t color, int count, int) {
+    sk_memset16_portable(dst, color, count);
 }
 
-void sk_set_pixels32_portable(uint32_t dst[], uint32_t value, int count, int) {
-    sk_memset32_portable(dst, value, count);
+void sk_set_pixel_row32_portable(uint32_t dst[], uint32_t color, int count, int) {
+    sk_memset32_portable(dst, color, count);
 }
 
-static void sk_set_pixels16_stub(uint16_t dst[], uint16_t value, int count, int totalCount) {
-    SkSetPixels16Proc proc = SkSetPixels16GetPlatformProc();
-    SkSetPixels16 = proc ? proc : sk_set_pixels16_portable;
-    SkSetPixels16(dst, value, count, totalCount);
+static void sk_set_pixel_row16_stub(uint16_t dst[], uint16_t color, int count, int totalCount) {
+    SkSetPixelRow16Proc proc = SkSetPixelRow16GetPlatformProc();
+    SkSetPixelRow16 = proc ? proc : sk_set_pixel_row16_portable;
+    SkSetPixelRow16(dst, color, count, totalCount);
 }
 
-SkSetPixels16Proc SkSetPixels16 = sk_set_pixels16_stub;
+SkSetPixelRow16Proc SkSetPixelRow16 = sk_set_pixel_row16_stub;
 
-static void sk_set_pixels32_stub(uint32_t dst[], uint32_t value, int count, int totalCount) {
-    SkSetPixels32Proc proc = SkSetPixels32GetPlatformProc();
-    SkSetPixels32 = proc ? proc : sk_set_pixels32_portable;
-    SkSetPixels32(dst, value, count, totalCount);
+static void sk_set_pixel_row32_stub(uint32_t dst[], uint32_t color, int count, int totalCount) {
+    SkSetPixelRow32Proc proc = SkSetPixelRow32GetPlatformProc();
+    SkSetPixelRow32 = proc ? proc : sk_set_pixel_row32_portable;
+    SkSetPixelRow32(dst, color, count, totalCount);
 }
 
-SkSetPixels32Proc SkSetPixels32 = sk_set_pixels32_stub;
+SkSetPixelRow32Proc SkSetPixelRow32 = sk_set_pixel_row32_stub;
+
+///////////////////////////////////////////////////////////////////////////////
+
+void sk_set_pixel_rect16_portable(uint16_t dst[], uint16_t color, int width, int height, int rowBytes) {
+    while (--height >= 0) {
+        sk_memset16_portable(dst, color, width);
+        dst = (uint16_t*)((char*)dst + rowBytes);
+    }
+}
+
+void sk_set_pixel_rect32_portable(uint32_t dst[], uint32_t color, int width, int height, int rowBytes) {
+    while (--height >= 0) {
+        sk_memset32_portable(dst, color, width);
+        dst = (uint32_t*)((char*)dst + rowBytes);
+    }
+}
+
+static void sk_set_pixel_rect16_stub(uint16_t dst[], uint16_t color, int width, int height, int rowBytes) {
+    SkSetPixelRect16Proc proc = SkSetPixelRect16GetPlatformProc();
+    SkSetPixelRect16 = proc ? proc : sk_set_pixel_rect16_portable;
+    SkSetPixelRect16(dst, color, width, height, rowBytes);
+}
+
+SkSetPixelRect16Proc SkSetPixelRect16 = sk_set_pixel_rect16_stub;
+
+static void sk_set_pixel_rect32_stub(uint32_t dst[], uint32_t color, int width, int height, int rowBytes) {
+    SkSetPixelRect32Proc proc = SkSetPixelRect32GetPlatformProc();
+    SkSetPixelRect32 = proc ? proc : sk_set_pixel_rect32_portable;
+    SkSetPixelRect32(dst, color, width, height, rowBytes);
+}
+
+SkSetPixelRect32Proc SkSetPixelRect32 = sk_set_pixel_rect32_stub;
 
 ///////////////////////////////////////////////////////////////////////////////
 

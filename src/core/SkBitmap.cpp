@@ -766,10 +766,8 @@ void SkBitmap::internalErase(const SkIRect& area,
                                 g >> (8 - SK_G16_BITS),
                                 b >> (8 - SK_B16_BITS));
             }
-            while (--height >= 0) {
-                sk_memset16(p, v, width);
-                p = (uint16_t*)((char*)p + rowBytes);
-            }
+
+            SkSetPixelRect16(p, v, width, height, rowBytes);
             break;
         }
         case kBGRA_8888_SkColorType:
@@ -784,10 +782,7 @@ void SkBitmap::internalErase(const SkIRect& area,
             uint32_t v = kRGBA_8888_SkColorType == this->colorType() ?
                          SkPackARGB_as_RGBA(a, r, g, b) : SkPackARGB_as_BGRA(a, r, g, b);
 
-            while (--height >= 0) {
-                sk_memset32(p, v, width);
-                p = (uint32_t*)((char*)p + rowBytes);
-            }
+            SkSetPixelRect32(p, v, width, height, rowBytes);
             break;
         }
         default:

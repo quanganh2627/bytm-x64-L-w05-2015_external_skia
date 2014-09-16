@@ -140,11 +140,11 @@ static void D_Clear_BitmapXferProc(void* pixels, size_t bytes, uint32_t, size_t)
 static void D_Dst_BitmapXferProc(void*, size_t, uint32_t, size_t) {}
 
 static void D32_Src_BitmapXferProc(void* pixels, size_t bytes, uint32_t data, size_t totalBytes) {
-    SkSetPixels32((uint32_t*)pixels, data, bytes >> 2, totalBytes >> 2);
+    SkSetPixelRow32((uint32_t*)pixels, data, bytes >> 2, totalBytes >> 2);
 }
 
 static void D16_Src_BitmapXferProc(void* pixels, size_t bytes, uint32_t data, size_t totalBytes) {
-    SkSetPixels16((uint16_t*)pixels, data, bytes >> 1, totalBytes >> 1);
+    SkSetPixelRow16((uint16_t*)pixels, data, bytes >> 1, totalBytes >> 1);
 }
 
 static void DA8_Src_BitmapXferProc(void* pixels, size_t bytes, uint32_t data, size_t) {
