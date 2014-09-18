@@ -531,6 +531,13 @@ LOCAL_STATIC_LIBRARIES := \
 	libgif \
 	libsfntly
 
+ifeq ($(ADD_INTEL_SKIMAGEDECODER), true)
+LOCAL_STATIC_LIBRARIES += libskia_ext libjpeg-turbo-static libsimd \
+	libippj libippi libipps libippcore
+LOCAL_SHARED_LIBRARIES += libva libva-android libhardware libcutils libmix_imagedecoder libutils
+LOCAL_CFLAGS += -DADD_INTEL_SKIMAGEDECODER
+endif
+
 LOCAL_C_INCLUDES := \
 	$(LOCAL_PATH)/include/config \
 	$(LOCAL_PATH)/include/core \

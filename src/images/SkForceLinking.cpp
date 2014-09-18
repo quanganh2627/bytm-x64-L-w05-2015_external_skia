@@ -15,6 +15,10 @@ int SkForceLinking(bool doNotPassTrue) {
     if (doNotPassTrue) {
         SkASSERT(false);
         CreateJPEGImageDecoder();
+#ifdef ADD_INTEL_SKIMAGEDECODER
+        CreateJPEGTurboImageDecoder();
+        CreateJPEGMixImageDecoder();
+#endif
         CreateWEBPImageDecoder();
         CreateBMPImageDecoder();
         CreateICOImageDecoder();
