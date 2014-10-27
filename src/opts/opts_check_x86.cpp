@@ -105,18 +105,8 @@ static inline bool supports_simd(int minLevel) {
     } else
 #endif
     {
-#if defined(SK_BUILD_FOR_ANDROID_FRAMEWORK)
-        /* For the Android framework we should always know at compile time if the device
-         * we are building for supports SSSE3.  The one exception to this rule is on the
-         * emulator where we are compiled without the -mssse3 option (so we have no
-         * SSSE3 procs) but can be run on a host machine that supports SSSE3
-         * instructions. So for that particular case we disable our SSSE3 options.
-         */
-        return false;
-#else
         static int gSIMDLevel = get_SIMD_level();
         return (minLevel <= gSIMDLevel);
-#endif
     }
 }
 
@@ -146,8 +136,6 @@ void SkBitmapProcState::platformProcs() {
     if (fSampleProc32 == S32_opaque_D32_filter_DX) {
         if (supports_simd(SK_CPU_SSE_LEVEL_SSSE3)) {
             fSampleProc32 = S32_opaque_D32_filter_DX_SSSE3;
-        } else {
-            fSampleProc32 = S32_opaque_D32_filter_DX_SSE2;
         }
     } else if (fSampleProc32 == S32_opaque_D32_filter_DXDY) {
         if (supports_simd(SK_CPU_SSE_LEVEL_SSSE3)) {
@@ -156,8 +144,6 @@ void SkBitmapProcState::platformProcs() {
     } else if (fSampleProc32 == S32_alpha_D32_filter_DX) {
         if (supports_simd(SK_CPU_SSE_LEVEL_SSSE3)) {
             fSampleProc32 = S32_alpha_D32_filter_DX_SSSE3;
-        } else {
-            fSampleProc32 = S32_alpha_D32_filter_DX_SSE2;
         }
     } else if (fSampleProc32 == S32_alpha_D32_filter_DXDY) {
         if (supports_simd(SK_CPU_SSE_LEVEL_SSSE3)) {
@@ -250,14 +236,11 @@ SkBlitRow::ColorProc SkBlitRow::PlatformColorProc() {
 SkBlitRow::ColorRectProc PlatformColorRectProcFactory(); // suppress warning
 
 SkBlitRow::ColorRectProc PlatformColorRectProcFactory() {
-/* Return NULL for now, since the optimized path in ColorRect32_SSE2 is disabled.
     if (supports_simd(SK_CPU_SSE_LEVEL_SSE2)) {
         return ColorRect32_SSE2;
     } else {
         return NULL;
     }
-*/
-    return NULL;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

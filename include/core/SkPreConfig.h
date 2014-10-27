@@ -130,16 +130,12 @@
 #ifndef SK_CPU_SSE_LEVEL
     // These checks must be done in descending order to ensure we set the highest
     // available SSE level.
-    #if defined(__SSE4_2__)
+    #if defined(__SSE4_2__) || defined(__x86_64__)
         #define SK_CPU_SSE_LEVEL    SK_CPU_SSE_LEVEL_SSE42
     #elif defined(__SSE4_1__)
         #define SK_CPU_SSE_LEVEL    SK_CPU_SSE_LEVEL_SSE41
-    #elif defined(__SSSE3__)
+    #else
         #define SK_CPU_SSE_LEVEL    SK_CPU_SSE_LEVEL_SSSE3
-    #elif defined(__SSE3__)
-        #define SK_CPU_SSE_LEVEL    SK_CPU_SSE_LEVEL_SSE3
-    #elif defined(__SSE2__)
-        #define SK_CPU_SSE_LEVEL    SK_CPU_SSE_LEVEL_SSE2
     #endif
 #endif
 
