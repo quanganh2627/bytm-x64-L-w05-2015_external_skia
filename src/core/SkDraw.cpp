@@ -242,11 +242,15 @@ static void CallBitmapXferProc(const SkBitmap& bitmap, const SkIRect& rect,
     const size_t rowBytes = bitmap.rowBytes();
     const int widthBytes = rect.width() << shiftPerPixel;
 
-    // skip down to the first scanline and X position
+    // skip down to the first scanline and X position mupp
     pixels += rect.fTop * rowBytes + (rect.fLeft << shiftPerPixel);
-    for (int scans = rect.height() - 1; scans >= 0; --scans) {
-        proc(pixels, widthBytes, procData);
-        pixels += rowBytes;
+    if ((rect.left() == 0) && (rowBytes == (size_t) widthBytes)) {
+        proc(pixels, widthBytes * rect.height(), procData);
+    } else {
+        for (int scans = rect.height() - 1; scans >= 0; --scans) {
+            proc(pixels, widthBytes, procData);
+            pixels += rowBytes;
+        }
     }
 }
 
