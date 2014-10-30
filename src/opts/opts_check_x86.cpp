@@ -208,7 +208,7 @@ static SkBlitRow::Proc32 platform_32_procs_SSE4[] = {
     NULL,                               // S32_Opaque,
     S32_Blend_BlitRow32_SSE2,           // S32_Blend,
     S32A_Opaque_BlitRow32_SSE4_asm,     // S32A_Opaque
-    S32A_Blend_BlitRow32_SSE2,          // S32A_Blend,
+    S32A_Blend_BlitRow32_SSE4_asm       // S32A_Blend,
 };
 #endif
 
