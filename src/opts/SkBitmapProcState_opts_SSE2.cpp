@@ -11,6 +11,13 @@
 #include "SkPaint.h"
 #include "SkUtils.h"
 
+#if !defined(__x86_64__)
+extern "C" void S32_opaque_D32_nofilter_DX_SSE2_asm(const uint32_t* xy,
+                                                    int count,
+                                                    const SkPMColor* srcAddr,
+                                                    uint32_t* colors);
+#endif
+
 static inline uint32_t ClampX_ClampY_pack_filter(SkFixed f, unsigned max,
                                                  SkFixed one) {
     unsigned i = SkClampMax(f >> 16, max);
@@ -524,3 +531,45 @@ void S32_D16_filter_DX_SSE2(const SkBitmapProcState& s,
         *colors++ = SkPixel32ToPixel16(dstColor);
     } while (--count > 0);
 }
+
+#if !defined(__x86_64__)
+void S32_opaque_D32_nofilter_DX_SSE2(const SkBitmapProcState& s,
+                                     const uint32_t* xy,
+                                     int count, uint32_t* colors) {
+    SkASSERT(count > 0 && colors != NULL);
+    SkASSERT(s.fInvType <= (SkMatrix::kTranslate_Mask | SkMatrix::kScale_Mask));
+    SkASSERT(s.fDoFilter == false);
+    SkASSERT(s.fBitmap->config() == SkBitmap::kARGB_8888_Config);
+    SkASSERT(s.fAlphaScale == 256);
+
+    const SkPMColor* SK_RESTRICT srcAddr =
+        (const SkPMColor*)s.fBitmap->getPixels();
+
+    // buffer is y32, x16, x16, x16, x16, x16
+    // bump srcAddr to the proper row, since we're told Y never changes
+    SkASSERT((unsigned)xy[0] < (unsigned)s.fBitmap->height());
+    srcAddr = (const SkPMColor*)((const char*)srcAddr +
+                                                xy[0] * s.fBitmap->rowBytes());
+    xy += 1;
+
+    SkPMColor src;
+
+    if (1 == s.fBitmap->width()) {
+        src = srcAddr[0];
+        uint32_t dstValue = src;
+        sk_memset32(colors, dstValue, count);
+    } else {
+        int i;
+
+        S32_opaque_D32_nofilter_DX_SSE2_asm(xy, count, srcAddr, colors);
+
+        xy     += 2 * (count >> 2);
+        colors += 4 * (count >> 2);
+        const uint16_t* SK_RESTRICT xx = (const uint16_t*)(xy);
+        for (i = (count & 3); i > 0; --i) {
+            SkASSERT(*xx < (unsigned)s.fBitmap->width());
+            src = srcAddr[*xx++]; *colors++ = src;
+        }
+    }
+}
+#endif

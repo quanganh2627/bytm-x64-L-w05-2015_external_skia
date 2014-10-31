@@ -149,6 +149,10 @@ void SkBitmapProcState::platformProcs() {
         if (supports_simd(SK_CPU_SSE_LEVEL_SSSE3)) {
             fSampleProc32 = S32_alpha_D32_filter_DXDY_SSSE3;
         }
+    } else if (fSampleProc32 == S32_opaque_D32_nofilter_DX) {
+#if !defined(__x86_64__)
+        fSampleProc32 = S32_opaque_D32_nofilter_DX_SSE2; // Not 64-bit compatible
+#endif
     }
 
     /* Check fSampleProc16 */

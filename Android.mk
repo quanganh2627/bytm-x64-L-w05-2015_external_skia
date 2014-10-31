@@ -625,6 +625,7 @@ LOCAL_CFLAGS_x86 += \
 LOCAL_SRC_FILES_x86 += \
 	src/opts/opts_check_x86.cpp \
 	src/opts/SkBitmapProcState_opts_SSE2.cpp \
+	src/opts/SkBitmapProcState_opts_SSE2_asm.S \
 	src/opts/SkBitmapFilter_opts_SSE2.cpp \
 	src/opts/SkBlitRow_opts_SSE2.cpp \
 	src/opts/SkBlitRect_opts_SSE2.cpp \
