@@ -12,6 +12,7 @@
 #include "SkColor_opts_SSE2.h"
 #include "SkDither.h"
 #include "SkUtils.h"
+#include "SkMathPriv.h"
 
 /* SSE2 version of S32_Blend_BlitRow32()
  * portable version is in core/SkBlitRow_D32.cpp
@@ -1355,6 +1356,366 @@ void S32A_D565_Opaque_Dither_SSE2(uint16_t* SK_RESTRICT dst,
                 *dst = SkCompact_rgb_16((src_expanded + dst_expanded) >> 5);
             }
             dst += 1;
+            DITHER_INC_X(x);
+        } while (--count != 0);
+    }
+}
+
+/* SSE2 version of S32A_D565_Blend()
+ * portable version is in core/SkBlitRow_D16.cpp
+ */
+
+void S32A_D565_Blend_SSE2(uint16_t* SK_RESTRICT dst, const SkPMColor* SK_RESTRICT src,
+        int count, U8CPU alpha, int /*x*/, int /*y*/) {
+    SkASSERT(255 > alpha);
+
+    while (((size_t)src & 0xF ) && count-- > 0 )
+    {
+        SkPMColor sc = *src++;
+        if (sc) {
+            uint16_t dc = *dst;
+            unsigned dst_scale = 255 - SkMulDiv255Round(SkGetPackedA32(sc), alpha);
+            unsigned dr = SkMulS16(SkPacked32ToR16(sc), alpha)
+                    + SkMulS16(SkGetPackedR16(dc), dst_scale);
+            unsigned dg = SkMulS16(SkPacked32ToG16(sc), alpha)
+                    + SkMulS16(SkGetPackedG16(dc), dst_scale);
+            unsigned db = SkMulS16(SkPacked32ToB16(sc), alpha)
+                    + SkMulS16(SkGetPackedB16(dc), dst_scale);
+            *dst = SkPackRGB16(SkDiv255Round(dr), SkDiv255Round(dg), SkDiv255Round(db));
+        }
+        dst++;
+    }
+
+    __m128i v_alpha = _mm_set1_epi16(alpha);
+    __m128i v_128 = _mm_set1_epi16(128);
+
+    while (count >= 8) {
+
+        __m128i src_pixel_l = _mm_load_si128((const __m128i*)(src));
+        __m128i src_pixel_h = _mm_load_si128((const __m128i*)(src+4));
+
+        // compute dst_scale
+        __m128i dst_scale = _mm_srli_epi32(src_pixel_l, 24);
+        dst_scale = _mm_packs_epi32(dst_scale, _mm_srli_epi32(src_pixel_h, 24));
+
+        dst_scale = _mm_mullo_epi16(dst_scale, v_alpha);
+        dst_scale = _mm_add_epi16(dst_scale, v_128);
+        dst_scale = _mm_add_epi16(dst_scale, _mm_srli_epi16(dst_scale, 8));
+        dst_scale = _mm_srli_epi16(dst_scale, 8);
+        dst_scale = _mm_sub_epi16(_mm_set1_epi16(255), dst_scale);
+
+        __m128i dst_pixel = _mm_loadu_si128((__m128i *)dst);
+
+        // SkMulS16(SkPacked32ToR16(sc), alpha)
+        __m128i src_r_l = _mm_srli_epi32(src_pixel_l, 3);
+        __m128i src_r_h = _mm_srli_epi32(src_pixel_h, 3);
+        src_r_l = _mm_and_si128(src_r_l, _mm_set1_epi32(0x1F));
+        src_r_h = _mm_and_si128(src_r_h, _mm_set1_epi32(0x1F));
+        src_r_l = _mm_packs_epi32(src_r_l, src_r_h);
+        src_r_l = _mm_mullo_epi16(src_r_l, v_alpha);
+
+        // SkMulS16(SkGetPackedR16(dc), dst_scale)
+        __m128i dst_r = _mm_srli_epi16(dst_pixel, SK_R16_SHIFT);
+        dst_r = _mm_mullo_epi16(dst_r, dst_scale);
+        dst_r = _mm_add_epi16(dst_r, src_r_l);
+        dst_r = _mm_add_epi16(dst_r, v_128);
+        // add and shift
+        dst_r = _mm_add_epi16(dst_r, _mm_srli_epi16(dst_r, 8));
+        dst_r = _mm_srli_epi16(dst_r, 8);
+
+        // SkMulS16(SkPacked32ToG16(sc), alpha)
+
+        __m128i src_g_l = _mm_srli_epi32(src_pixel_l, 10);
+        __m128i src_g_h = _mm_srli_epi32(src_pixel_h, 10);
+        src_g_l = _mm_and_si128(src_g_l, _mm_set1_epi32(0x3F));
+        src_g_h = _mm_and_si128(src_g_h, _mm_set1_epi32(0x3F));
+        src_g_l = _mm_packs_epi32(src_g_l, src_g_h);
+        src_g_l = _mm_mullo_epi16(src_g_l, v_alpha);
+
+        // SkMulS16(SkGetPackedG16(dc), dst_scale)
+        __m128i dst_g = _mm_srli_epi16(dst_pixel, SK_G16_SHIFT);
+        dst_g = _mm_and_si128(dst_g, _mm_set1_epi16(SK_G16_MASK));
+        dst_g = _mm_mullo_epi16(dst_g, dst_scale);
+        dst_g = _mm_add_epi16(dst_g, src_g_l);
+        dst_g = _mm_add_epi16(dst_g, v_128);
+        // add and shift
+        dst_g = _mm_add_epi16(dst_g, _mm_srli_epi16(dst_g, 8));
+        dst_g = _mm_srli_epi16(dst_g, 8);
+
+        // SkMulS16(SkPacked32ToB16(sc), alpha)
+        __m128i src_b_l = _mm_srli_epi32(src_pixel_l, 19);
+        __m128i src_b_h = _mm_srli_epi32(src_pixel_h, 19);
+        src_b_l = _mm_and_si128(src_b_l, _mm_set1_epi32(0x1F));
+        src_b_h = _mm_and_si128(src_b_h, _mm_set1_epi32(0x1F));
+        src_b_l = _mm_packs_epi32(src_b_l, src_b_h);
+        src_b_l = _mm_mullo_epi16(src_b_l, v_alpha);
+
+        // SkMulS16(SkGetPackedB16(dc), dst_scale);
+
+        __m128i dst_b = _mm_and_si128(dst_pixel, _mm_set1_epi16(SK_B16_MASK));
+        dst_b = _mm_mullo_epi16(dst_b, dst_scale);
+        dst_b = _mm_add_epi16(dst_b, src_b_l);
+        dst_b = _mm_add_epi16(dst_b, v_128);
+        // add and shift
+        dst_b = _mm_add_epi16(dst_b, _mm_srli_epi16(dst_b, 8));
+        dst_b = _mm_srli_epi16(dst_b, 8);
+
+        // *dst = SkPackRGB16(dr, dg, db);
+        dst_r = _mm_slli_epi16(dst_r, SK_R16_SHIFT);
+        dst_r = _mm_or_si128(dst_r, dst_b);
+        dst_g = _mm_slli_epi16(dst_g, SK_G16_SHIFT);
+        dst_r = _mm_or_si128(dst_r, dst_g);
+
+        _mm_storeu_si128((__m128i *)dst, dst_r);
+
+        dst += 8;
+        src += 8;
+        count -= 8;
+    }
+
+    while (count-- > 0 )
+    {
+        SkPMColor sc = *src++;
+        if (sc) {
+            uint16_t dc = *dst;
+            unsigned dst_scale = 255 - SkMulDiv255Round(SkGetPackedA32(sc), alpha);
+            unsigned dr = SkMulS16(SkPacked32ToR16(sc), alpha)
+                    + SkMulS16(SkGetPackedR16(dc), dst_scale);
+            unsigned dg = SkMulS16(SkPacked32ToG16(sc), alpha)
+                    + SkMulS16(SkGetPackedG16(dc), dst_scale);
+            unsigned db = SkMulS16(SkPacked32ToB16(sc), alpha)
+                    + SkMulS16(SkGetPackedB16(dc), dst_scale);
+            *dst = SkPackRGB16(SkDiv255Round(dr), SkDiv255Round(dg), SkDiv255Round(db));
+        }
+        dst++;
+     }
+
+}
+
+/* SSE2 version of S32_D565_Blend()
+ * portable version is in core/SkBlitRow_D16.cpp
+ */
+
+void S32_D565_Blend_SSE2(uint16_t* SK_RESTRICT dst, const SkPMColor* SK_RESTRICT src,
+        int count, U8CPU alpha, int x, int y)
+{
+
+    __m128i alpha_scale, mask_RB, mask_G;
+
+    if (count >= 8) {
+         alpha_scale = _mm_set1_epi16(SkAlpha255To256(alpha));
+         mask_RB = _mm_set1_epi32(0x1F);
+         mask_G  = _mm_set1_epi32(0x3F);
+    }
+
+    while (count >= 8) {
+
+        __m128i src_pixel_l = _mm_loadu_si128((const __m128i*)(src));
+        __m128i src_pixel_h = _mm_loadu_si128((const __m128i*)(src+4));
+
+        __m128i src_r_l = _mm_srli_epi32(src_pixel_l, 3);
+        src_r_l = _mm_and_si128(src_r_l, mask_RB);
+        __m128i src_r_h = _mm_srli_epi32(src_pixel_h, 3);
+        src_r_h = _mm_and_si128(src_r_h, mask_RB);
+        src_r_l = _mm_packs_epi32(src_r_l, src_r_h);
+
+        __m128i src_g_l = _mm_srli_epi32(src_pixel_l, 10);
+        src_g_l = _mm_and_si128(src_g_l, mask_G);
+        __m128i src_g_h = _mm_srli_epi32(src_pixel_h, 10);
+        src_g_h = _mm_and_si128(src_g_h, mask_G);
+        src_g_l = _mm_packs_epi32(src_g_l, src_g_h);
+
+        __m128i src_b_l = _mm_srli_epi32(src_pixel_l, 19);
+        src_b_l = _mm_and_si128(src_b_l, mask_RB);
+        __m128i src_b_h = _mm_srli_epi32(src_pixel_h, 19);
+        src_b_h = _mm_and_si128(src_b_h, mask_RB);
+        src_b_l = _mm_packs_epi32(src_b_l, src_b_h);
+
+        __m128i dst_pixel = _mm_loadu_si128((__m128i *)dst);
+        __m128i dst_r = _mm_srli_epi16(dst_pixel, SK_R16_SHIFT);
+        src_r_l = _mm_sub_epi16(src_r_l, dst_r);
+        src_r_l = _mm_mullo_epi16(src_r_l, alpha_scale);
+        src_r_l = _mm_srli_epi16(src_r_l, 8);
+        src_r_l = _mm_add_epi16(src_r_l, dst_r);
+        src_r_l = _mm_and_si128(src_r_l, _mm_set1_epi16(SK_R16_MASK));
+
+        __m128i dst_g = _mm_srli_epi16(dst_pixel, SK_G16_SHIFT);
+        dst_g = _mm_and_si128(dst_g, _mm_set1_epi16(SK_G16_MASK));
+        src_g_l = _mm_sub_epi16(src_g_l, dst_g);
+        src_g_l = _mm_mullo_epi16(src_g_l, alpha_scale);
+        src_g_l = _mm_srli_epi16(src_g_l, 8);
+        src_g_l = _mm_add_epi16(src_g_l, dst_g);
+        src_g_l = _mm_and_si128(src_g_l, _mm_set1_epi16(SK_G16_MASK));
+
+        __m128i dst_b = _mm_and_si128(dst_pixel, _mm_set1_epi16(SK_B16_MASK));
+        src_b_l = _mm_sub_epi16(src_b_l, dst_b);
+        src_b_l = _mm_mullo_epi16(src_b_l, alpha_scale);
+        src_b_l = _mm_srli_epi16(src_b_l, 8);
+        src_b_l = _mm_add_epi16(src_b_l, dst_b);
+        src_b_l = _mm_and_si128(src_b_l, _mm_set1_epi16(SK_B16_MASK));
+
+        src_r_l = _mm_slli_epi16(src_r_l, SK_R16_SHIFT);
+        src_g_l = _mm_slli_epi16(src_g_l, SK_G16_SHIFT);
+        src_r_l = _mm_or_si128(src_r_l, src_g_l);
+        src_r_l = _mm_or_si128(src_r_l, src_b_l);
+
+        _mm_storeu_si128((__m128i *)dst, src_r_l);
+
+        src += 8;
+        dst += 8;
+        count -= 8;
+    }
+
+
+    if (count > 0) {
+        int scale = SkAlpha255To256(alpha);
+        do {
+            SkPMColor c = *src++;
+            SkPMColorAssert(c);
+            SkASSERT(SkGetPackedA32(c) == 255);
+            uint16_t d = *dst;
+            *dst++ = SkPackRGB16(
+                    SkAlphaBlend(SkPacked32ToR16(c), SkGetPackedR16(d), scale),
+                    SkAlphaBlend(SkPacked32ToG16(c), SkGetPackedG16(d), scale),
+                    SkAlphaBlend(SkPacked32ToB16(c), SkGetPackedB16(d), scale));
+        } while (--count != 0);
+    }
+}
+
+/* SSE2 version of S32_D565_Blend_Dither()
+ * portable version is in core/SkBlitRow_D16.cpp
+ */
+
+void S32_D565_Blend_Dither_SSE2(uint16_t* SK_RESTRICT dst, const SkPMColor* SK_RESTRICT src,
+        int count, U8CPU alpha, int x, int y)
+{
+#ifdef ENABLE_DITHER_MATRIX_4X4
+    const uint8_t* dither_scan = gDitherMatrix_3Bit_4X4[(y) & 3];
+#else
+    uint16_t dither_scan = gDitherMatrix_3Bit_16[(y) & 3];
+#endif
+
+    __m128i dither_v, maskFF, alpha_scale;
+    unsigned short dither_temp[4];
+
+    // if we are using SIMD, load dither_scan (or precursor) into 8 ints
+    if (count >= 8) {
+
+#ifdef ENABLE_DITHER_MATRIX_4X4
+    // #define DITHER_VALUE(x) dither_scan[(x) & 3]
+        dither_temp[0] = dither_scan[x & 3];
+        dither_temp[1] = dither_scan[x+1 & 3];
+        dither_temp[2] = dither_scan[x+2 & 3];
+        dither_temp[3] = dither_scan[x+3 & 3];
+        dither_v = _mm_loadl_epi64((__m128i *) dither_temp);
+        dither_v = _mm_shuffle_epi32(dither_v, 0x44);
+#else
+        dither_temp[0] = ((dither_scan >> ((x & 3) << 2)) & 0xF);
+        dither_temp[1] = ((dither_scan >> (((x+1) & 3) << 2)) & 0xF);
+        dither_temp[2] = ((dither_scan >> (((x+2) & 3) << 2)) & 0xF);
+        dither_temp[3] = ((dither_scan >> (((x+3) & 3) << 2)) & 0xF);
+        dither_v = _mm_loadl_epi64((__m128i *) dither_temp);
+        dither_v = _mm_shuffle_epi32(dither_v, 0x44);
+#endif
+         maskFF = _mm_set1_epi32(0xFF);
+         alpha_scale = _mm_set1_epi16(SkAlpha255To256(alpha));
+     }
+
+     while (count >= 8) {
+
+        __m128i src_pixel_l = _mm_loadu_si128((const __m128i*)(src));
+        __m128i src_pixel_h = _mm_loadu_si128((const __m128i*)(src+4));
+
+        // sr = (sr + d - (sr >> 5))
+        __m128i src_r_l = _mm_and_si128(src_pixel_l, maskFF);
+        __m128i src_r_h = _mm_and_si128(src_pixel_h, maskFF);
+        src_r_l = _mm_packs_epi32(src_r_l, src_r_h);
+
+        __m128i srvs = _mm_srli_epi16(src_r_l, 5);
+        src_r_l = _mm_add_epi16(src_r_l, dither_v);
+        src_r_l = _mm_sub_epi16(src_r_l, srvs);
+        src_r_l = _mm_srli_epi16(src_r_l, 3);
+
+        // sg = (sg + (d >> 1) - (sg >> 6))
+        __m128i src_g_l = _mm_srli_epi32(src_pixel_l, 8);
+        src_g_l = _mm_and_si128(src_g_l, maskFF);
+        __m128i src_g_h = _mm_srli_epi32(src_pixel_h, 8);
+        src_g_h = _mm_and_si128(src_g_h, maskFF);
+        src_g_l = _mm_packs_epi32(src_g_l, src_g_h);
+
+        __m128i sgvs = _mm_srli_epi16(src_g_l, 6);
+        src_g_l = _mm_add_epi16(src_g_l,_mm_srli_epi16(dither_v, 1));
+        src_g_l = _mm_sub_epi16(src_g_l, sgvs);
+        src_g_l = _mm_srli_epi16(src_g_l, 2);
+
+        // sb = (sb + d - (sb >> 5))
+        __m128i src_b_l = _mm_srli_epi32(src_pixel_l, 16);
+        src_b_l = _mm_and_si128(src_b_l, maskFF);
+        __m128i src_b_h = _mm_srli_epi32(src_pixel_h, 16);
+        src_b_h = _mm_and_si128(src_b_h, maskFF);
+        src_b_l = _mm_packs_epi32(src_b_l, src_b_h);
+
+        __m128i sbvs = _mm_srli_epi16(src_b_l, 5);
+        src_b_l = _mm_add_epi16(src_b_l, dither_v);
+        src_b_l = _mm_sub_epi16(src_b_l, sbvs);
+        src_b_l = _mm_srli_epi16(src_b_l, 3);
+
+        __m128i dst_pixel = _mm_loadu_si128((__m128i *)dst);
+        __m128i dst_r = _mm_srli_epi16(dst_pixel, SK_R16_SHIFT);
+        src_r_l = _mm_sub_epi16(src_r_l, dst_r);
+        src_r_l = _mm_mullo_epi16(src_r_l, alpha_scale);
+        src_r_l = _mm_srli_epi16(src_r_l, 8);
+        src_r_l = _mm_add_epi16(src_r_l, dst_r);
+        src_r_l = _mm_and_si128(src_r_l, _mm_set1_epi16(SK_R16_MASK));
+
+        __m128i dst_g = _mm_srli_epi16(dst_pixel, SK_G16_SHIFT);
+        dst_g = _mm_and_si128(dst_g, _mm_set1_epi16(SK_G16_MASK));
+        src_g_l = _mm_sub_epi16(src_g_l, dst_g);
+        src_g_l = _mm_mullo_epi16(src_g_l, alpha_scale);
+        src_g_l = _mm_srli_epi16(src_g_l, 8);
+        src_g_l = _mm_add_epi16(src_g_l, dst_g);
+        src_g_l = _mm_and_si128(src_g_l, _mm_set1_epi16(SK_G16_MASK));
+
+        __m128i dst_b = _mm_and_si128(dst_pixel, _mm_set1_epi16(SK_B16_MASK));
+        src_b_l = _mm_sub_epi16(src_b_l, dst_b);
+        src_b_l = _mm_mullo_epi16(src_b_l, alpha_scale);
+        src_b_l = _mm_srli_epi16(src_b_l, 8);
+        src_b_l = _mm_add_epi16(src_b_l, dst_b);
+        src_b_l = _mm_and_si128(src_b_l, _mm_set1_epi16(SK_B16_MASK));
+
+        src_r_l = _mm_slli_epi16(src_r_l, SK_R16_SHIFT);
+        src_g_l = _mm_slli_epi16(src_g_l, SK_G16_SHIFT);
+        src_r_l = _mm_or_si128(src_r_l, src_g_l);
+        src_r_l = _mm_or_si128(src_r_l, src_b_l);
+
+        _mm_storeu_si128((__m128i *)dst, src_r_l);
+
+        src += 8;
+        dst += 8;
+        x += 8;
+        count -= 8;
+    }
+
+    if (count > 0) {
+        int scale = SkAlpha255To256(alpha);
+        DITHER_565_SCAN(y);
+        do {
+            SkPMColor c = *src++;
+            SkPMColorAssert(c);
+            SkASSERT(SkGetPackedA32(c) == 255);
+
+            int dither = DITHER_VALUE(x);
+            int sr = SkGetPackedR32(c);
+            int sg = SkGetPackedG32(c);
+            int sb = SkGetPackedB32(c);
+            sr = SkDITHER_R32To565(sr, dither);
+            sg = SkDITHER_G32To565(sg, dither);
+            sb = SkDITHER_B32To565(sb, dither);
+
+            uint16_t d = *dst;
+            *dst++ = SkPackRGB16(SkAlphaBlend(sr, SkGetPackedR16(d), scale),
+                                 SkAlphaBlend(sg, SkGetPackedG16(d), scale),
+                                 SkAlphaBlend(sb, SkGetPackedB16(d), scale));
             DITHER_INC_X(x);
         } while (--count != 0);
     }
